@@ -1,0 +1,404 @@
+/**
+ * PatientViewport.jsx
+ * Main exercise screen with webcam, pose detection, and real-time feedback
+ * 
+ * CRITICAL: Uses LEG-ONLY rendering to prevent jitter when upper body is cut off
+ */
+
+import React, { useRef, useEffect, useState, useCallback } from 'react';
+import { usePoseEstimation } from '../hooks/usePoseEstimation';
+import { useSession } from '../context/SessionContext';
+import { FEEDBACK_STATES, SESSION_PHASES } from '../context/SessionContext';
+import {
+  drawLegSkeleton,
+  drawStatsOverlay,
+  drawFeedbackOverlay,
+  areLowerBodyLandmarksVisible
+} from '../utils/drawing';
+import {
+  speakFeedback,
+  speakRepFeedback,
+  speakAngleFeedback,
+  speakGuidance,
+  FEEDBACK_MESSAGES
+} from '../utils/tts';
+
+/**
+ * PatientViewport Component
+ */
+const PatientViewport = () => {
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const animationFrameRef = useRef(null);
+  const lastFeedbackRef = useRef(null);
+  const containerRef = useRef(null);
+
+  const [cameraReady, setCameraReady] = useState(false);
+  const [cameraError, setCameraError] = useState(null);
+  const [showCalibrationHint, setShowCalibrationHint] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Session context
+  const {
+    phase,
+    legSide,
+    currentAngle,
+    leftAngle,
+    rightAngle,
+    updateAngle,
+    detectRep,
+    feedbackState,
+    improvement,
+    reps,
+    baselineROM,
+    audioEnabled
+  } = useSession();
+
+  // Memoize angle update callback
+  const handleAngleUpdate = useCallback((primaryAngle, angles) => {
+    updateAngle(primaryAngle);
+    detectRep(primaryAngle);
+
+    // Provide audio feedback during exercise (check phase directly to avoid stale closures)
+    // Phase and baseline checks are intentionally NOT in dependency array
+    // since updateAngle and detectRep handle state internally via refs
+  }, [updateAngle, detectRep]);
+
+  // Pose estimation hook
+  const {
+    isInitialized,
+    isLoading,
+    error: poseError,
+    processFrame,
+    leftAngle: detectedLeftAngle,
+    rightAngle: detectedRightAngle,
+    landmarks
+  } = usePoseEstimation({
+    legSide,
+    enableSmoothing: true,
+    onAngleUpdate: handleAngleUpdate,
+    minDetectionConfidence: 0.5,
+    minPresenceConfidence: 0.5
+  });
+
+  /**
+   * Detect if on mobile device
+   */
+  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
+  /**
+   * Initialize webcam
+   */
+  useEffect(() => {
+    const startCamera = async () => {
+      try {
+        // Mobile-optimized constraints
+        const videoConstraints = isMobile ? {
+          width: { ideal: 854 },  // Lower resolution for mobile
+          height: { ideal: 480 },
+          facingMode: 'user',     // Front camera
+          frameRate: { ideal: 30, max: 30 } // Cap at 30 FPS for battery
+        } : {
+          width: { ideal: 1280 }, // Higher resolution for laptops
+          height: { ideal: 720 },
+          facingMode: 'user',
+          frameRate: { ideal: 60 } // Higher FPS on desktop
+        };
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: videoConstraints,
+          audio: false
+        });
+
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.addEventListener('loadedmetadata', () => {
+            setCameraReady(true);
+            console.log('✅ Camera initialized');
+            
+            // Speak guidance
+            if (phase === SESSION_PHASES.CALIBRATION) {
+              speakGuidance('CALIBRATION_START');
+            } else {
+              speakGuidance('LEGS_VISIBLE');
+            }
+          });
+        }
+      } catch (err) {
+        console.error('❌ Camera access failed:', err);
+        setCameraError(err.message);
+      }
+    };
+
+    startCamera();
+
+    // Cleanup
+    return () => {
+      if (videoRef.current && videoRef.current.srcObject) {
+        const tracks = videoRef.current.srcObject.getTracks();
+        tracks.forEach(track => track.stop());
+      }
+    };
+  }, [phase]);
+
+  /**
+   * Main rendering loop
+   */
+  useEffect(() => {
+    if (!cameraReady || !isInitialized) return;
+
+    const renderLoop = async () => {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+
+      if (!video || !canvas) {
+        animationFrameRef.current = requestAnimationFrame(renderLoop);
+        return;
+      }
+
+      // Sync canvas size with video
+      if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+      }
+
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Process current frame
+      const timestamp = performance.now();
+      const poseData = await processFrame(video, timestamp);
+
+      if (poseData && poseData.landmarks) {
+        // Determine leg colors based on feedback
+        const leftLegColor = getLegColor(detectedLeftAngle, baselineROM, 135);
+        const rightLegColor = getLegColor(detectedRightAngle, baselineROM, 135);
+
+        // Draw leg skeleton with color-coded feedback
+        // No need to mirror in canvas context - CSS transform handles it
+        // Returns false if no legs visible
+        const legsDrawn = drawLegSkeleton(ctx, poseData.landmarks, {
+          leftLegColor,
+          rightLegColor,
+          leftAngle: detectedLeftAngle,
+          rightAngle: detectedRightAngle,
+          lineWidth: 5,
+          legSide // Pass legSide so it knows which leg to draw
+        });
+
+        // If no legs drawn, show warning
+        if (!legsDrawn) {
+          ctx.save();
+          ctx.scale(-1, 1);
+          ctx.font = 'bold 28px Arial';
+          ctx.fillStyle = '#FF6B6B';
+          ctx.textAlign = 'center';
+          ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+          ctx.shadowBlur = 10;
+          ctx.fillText('\u26a0\ufe0f Move back - show full legs', -canvas.width / 2, canvas.height / 2);
+          ctx.shadowBlur = 0;
+          ctx.restore();
+        } else {
+          // Draw stats overlay only if legs are visible
+          drawStatsOverlay(ctx, {
+            leftAngle: detectedLeftAngle,
+            rightAngle: detectedRightAngle,
+            reps,
+            improvement,
+            phase
+          });
+
+          // Show feedback overlay for excellent reps
+          if (feedbackState === FEEDBACK_STATES.EXCELLENT) {
+            drawFeedbackOverlay(ctx, '✓ TARGET REACHED!', 'success');
+          }
+        }
+      }
+
+      // Continue loop
+      animationFrameRef.current = requestAnimationFrame(renderLoop);
+    };
+
+    renderLoop();
+
+    // Cleanup
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, [
+    cameraReady,
+    isInitialized,
+    processFrame,
+    detectedLeftAngle,
+    detectedRightAngle,
+    feedbackState,
+    reps,
+    improvement,
+    phase,
+    baselineROM,
+    legSide
+  ]);
+
+  /**
+   * Get leg color based on angle thresholds
+   */
+  const getLegColor = (angle, baseline, target) => {
+    if (!angle || !baseline) return 'white';
+    
+    if (angle >= target) return 'green';
+    if (angle >= baseline) return 'yellow';
+    return 'red';
+  };
+
+  /**
+   * Get status message
+   */
+  const getStatusMessage = () => {
+    if (cameraError) return `Camera Error: ${cameraError}`;
+    if (poseError) return `Pose Detection Error: ${poseError}`;
+    if (!cameraReady) return 'Initializing camera...';
+    if (!isInitialized || isLoading) return 'Loading AI model...';
+    return 'Ready';
+  };
+
+  /**
+   * Toggle fullscreen mode
+   */
+  const toggleFullscreen = async () => {
+    if (!containerRef.current) return;
+
+    try {
+      if (!document.fullscreenElement) {
+        await containerRef.current.requestFullscreen();
+        setIsFullscreen(true);
+      } else {
+        await document.exitFullscreen();
+        setIsFullscreen(false);
+      }
+    } catch (err) {
+      console.error('Fullscreen error:', err);
+    }
+  };
+
+  // Listen for fullscreen changes
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  return (
+    <div ref={containerRef} className="relative w-full h-full bg-gray-900 rounded-lg overflow-hidden shadow-2xl">
+      {/* Video element (mirrored for user) */}
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted
+        className="absolute inset-0 w-full h-full object-cover"
+        style={{ transform: 'scaleX(-1)' }}
+      />
+
+      {/* Canvas overlay for pose visualization */}
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 w-full h-full"
+        style={{ transform: 'scaleX(-1)' }}
+      />
+
+      {/* Status indicator (top-left) */}
+      {(!isInitialized || isLoading || !cameraReady) && (
+        <div className="absolute top-4 left-4 bg-black bg-opacity-70 px-4 py-2 rounded-lg backdrop-blur-sm">
+          <div className="flex items-center space-x-2">
+            {(isLoading || !isInitialized) && (
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+            )}
+            <p className="text-white text-sm font-medium">
+              {getStatusMessage()}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Fullscreen button (top-right, always visible) */}
+      <button
+        onClick={toggleFullscreen}
+        className="absolute top-4 right-4 bg-black bg-opacity-70 hover:bg-opacity-90 p-3 rounded-lg backdrop-blur-sm transition-all duration-200 z-10"
+        title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
+      >
+        {isFullscreen ? (
+          <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        ) : (
+          <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+          </svg>
+        )}
+      </button>
+
+      {/* Phase indicator (top-center) */}
+      {phase === SESSION_PHASES.CALIBRATION && (
+        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-yellow-500 bg-opacity-90 px-6 py-3 rounded-lg">
+          <p className="text-white font-bold text-lg">
+            📏 CALIBRATION MODE
+          </p>
+          <p className="text-white text-sm text-center">
+            Bend your knee as much as you can
+          </p>
+        </div>
+      )}
+
+      {/* Baseline indicator (top-right, below fullscreen button) */}
+      {baselineROM && phase === SESSION_PHASES.EXERCISE && (
+        <div className="absolute top-20 right-4 bg-black bg-opacity-70 px-4 py-2 rounded-lg">
+          <p className="text-gray-400 text-xs">Baseline</p>
+          <p className="text-green-400 font-bold text-xl">{Math.round(baselineROM)}°</p>
+        </div>
+      )}
+
+      {/* Error overlay */}
+      {(cameraError || poseError) && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-90 backdrop-blur-sm">
+          <div className="bg-red-600 text-white px-8 py-6 rounded-lg max-w-md text-center">
+            <h3 className="text-2xl font-bold mb-3">⚠️ Error</h3>
+            <p className="text-sm mb-4">{cameraError || poseError}</p>
+            <button
+              onClick={() => window.location.reload()}
+              className="px-6 py-3 bg-white text-red-600 rounded-lg hover:bg-gray-100 font-semibold transition"
+            >
+              Reload App
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Loading overlay */}
+      {!cameraReady && !cameraError && !poseError && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-90">
+          <div className="text-white text-center">
+            <div className="animate-spin rounded-full h-20 w-20 border-b-4 border-white mx-auto mb-6" />
+            <p className="text-xl font-semibold">Initializing camera...</p>
+            <p className="text-sm text-gray-400 mt-2">Please allow camera access</p>
+          </div>
+        </div>
+      )}
+
+      {/* Calibration hint */}
+      {phase === SESSION_PHASES.CALIBRATION && showCalibrationHint && (
+        <div className="absolute bottom-20 left-1/2 transform -translate-x-1/2 bg-blue-500 bg-opacity-90 px-6 py-3 rounded-lg max-w-md">
+          <p className="text-white text-center">
+            💡 Tip: Sit comfortably and bend your knee slowly. We'll record your maximum flexion.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default PatientViewport;

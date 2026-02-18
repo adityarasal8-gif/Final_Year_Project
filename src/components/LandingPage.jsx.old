@@ -1,0 +1,330 @@
+/**
+ * LandingPage.jsx
+ * Professional landing page with authentication options
+ */
+
+import React, { useState } from 'react';
+import Login from './Login';
+import Signup from './Signup';
+
+const LandingPage = ({ onAuthSuccess }) => {
+  const [showAuth, setShowAuth] = useState(null); // null | 'login' | 'signup'
+  const [userType, setUserType] = useState(null); // 'patient' | 'therapist'
+
+  const handleGetStarted = (type) => {
+    setUserType(type);
+    setShowAuth('signup');
+  };
+
+  const handleSignIn = (type) => {
+    setUserType(type);
+    setShowAuth('login');
+  };
+
+  const handleAuthSuccess = (user) => {
+    onAuthSuccess(user);
+  };
+
+  const handleBack = () => {
+    setShowAuth(null);
+    setUserType(null);
+  };
+
+  // Show authentication forms
+  if (showAuth === 'login') {
+    return (
+      <Login 
+        userType={userType} 
+        onSuccess={handleAuthSuccess}
+        onBack={handleBack}
+        onSwitchToSignup={() => setShowAuth('signup')}
+      />
+    );
+  }
+
+  if (showAuth === 'signup') {
+    return (
+      <Signup 
+        userType={userType}
+        onSuccess={handleAuthSuccess}
+        onBack={handleBack}
+        onSwitchToLogin={() => setShowAuth('login')}
+      />
+    );
+  }
+
+  // Landing page
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-900 via-purple-900 to-indigo-900 overflow-hidden">
+      {/* Header */}
+      <header className="bg-black bg-opacity-30 backdrop-blur-sm">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+          <div className="flex justify-between items-center">
+            <div className="flex items-center space-x-3">
+              <div className="text-4xl">🦵</div>
+              <div>
+                <h1 className="text-2xl font-bold text-white">Phisi</h1>
+                <p className="text-xs text-gray-300">AI-Powered Knee Physio</p>
+              </div>
+            </div>
+            <div className="flex space-x-3">
+              <button
+                onClick={() => handleSignIn('patient')}
+                className="px-4 py-2 text-white hover:text-gray-200 transition text-sm"
+              >
+                Patient Sign In
+              </button>
+              <button
+                onClick={() => handleSignIn('therapist')}
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition text-sm font-medium"
+              >
+                Therapist Login
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Hero Section */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
+        <div className="text-center mb-16">
+          <div className="inline-block mb-6 px-4 py-2 bg-green-500 bg-opacity-20 rounded-full border border-green-400">
+            <span className="text-green-300 font-semibold text-sm">
+              ✨ Zero Hardware Required • 100% AI-Powered
+            </span>
+          </div>
+          
+          <h2 className="text-5xl md:text-6xl font-bold text-white mb-6 leading-tight">
+            Revolutionary Knee<br />
+            Physiotherapy Monitoring
+          </h2>
+          
+          <p className="text-xl text-gray-300 mb-8 max-w-3xl mx-auto">
+            No sensors. No wearables. Just your camera and AI-powered pose detection.
+            Get real-time feedback, track progress, and achieve better recovery outcomes.
+          </p>
+
+          <div className="flex flex-col sm:flex-row justify-center gap-4 mb-12">
+            <button
+              onClick={() => handleGetStarted('patient')}
+              className="px-8 py-4 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white text-lg font-semibold rounded-lg shadow-lg transform transition hover:scale-105"
+            >
+              🏋️ Start as Patient
+            </button>
+            <button
+              onClick={() => handleGetStarted('therapist')}
+              className="px-8 py-4 bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white text-lg font-semibold rounded-lg shadow-lg transform transition hover:scale-105"
+            >
+              📊 Start as Therapist
+            </button>
+          </div>
+
+          {/* Demo Indicator */}
+          <div className="inline-block px-6 py-3 bg-yellow-500 bg-opacity-20 rounded-lg border border-yellow-400">
+            <p className="text-yellow-200 text-sm">
+              💡 <strong>Try without signing up:</strong> Click any button above and use demo mode
+            </p>
+          </div>
+        </div>
+
+        {/* Features Grid */}
+        <div className="grid md:grid-cols-3 gap-8 mt-20">
+          {/* Feature 1 */}
+          <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-xl p-6 border border-gray-700 hover:border-green-500 transition">
+            <div className="text-5xl mb-4">📹</div>
+            <h3 className="text-xl font-bold text-white mb-3">
+              Camera-Based Tracking
+            </h3>
+            <p className="text-gray-300">
+              Uses MediaPipe AI to detect leg landmarks with 98% accuracy. No special equipment needed—just your webcam or phone camera.
+            </p>
+          </div>
+
+          {/* Feature 2 */}
+          <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-xl p-6 border border-gray-700 hover:border-purple-500 transition">
+            <div className="text-5xl mb-4">📈</div>
+            <h3 className="text-xl font-bold text-white mb-3">
+              Real-Time Feedback
+            </h3>
+            <p className="text-gray-300">
+              Color-coded visual feedback + voice guidance. Instantly know if you're hitting your ROM targets. Green means good progress!
+            </p>
+          </div>
+
+          {/* Feature 3 */}
+          <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-xl p-6 border border-gray-700 hover:border-blue-500 transition">
+            <div className="text-5xl mb-4">🎯</div>
+            <h3 className="text-xl font-bold text-white mb-3">
+              Adaptive Baseline
+            </h3>
+            <p className="text-gray-300">
+              Day 1 calibration captures your current ROM. System adapts to your progress and shows improvement percentage over time.
+            </p>
+          </div>
+
+          {/* Feature 4 */}
+          <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-xl p-6 border border-gray-700 hover:border-yellow-500 transition">
+            <div className="text-5xl mb-4">🔊</div>
+            <h3 className="text-xl font-bold text-white mb-3">
+              Voice Guidance
+            </h3>
+            <p className="text-gray-300">
+              Hands-free audio feedback. "Good job!", "Try to bend more", milestone celebrations. Fully toggleable on/off.
+            </p>
+          </div>
+
+          {/* Feature 5 */}
+          <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-xl p-6 border border-gray-700 hover:border-green-500 transition">
+            <div className="text-5xl mb-4">📊</div>
+            <h3 className="text-xl font-bold text-white mb-3">
+              Therapist Dashboard
+            </h3>
+            <p className="text-gray-300">
+              Track multiple patients, monitor compliance scores, view ROM progression charts. Data-driven insights for better care.
+            </p>
+          </div>
+
+          {/* Feature 6 */}
+          <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-xl p-6 border border-gray-700 hover:border-purple-500 transition">
+            <div className="text-5xl mb-4">☁️</div>
+            <h3 className="text-xl font-bold text-white mb-3">
+              Cloud-Synced Progress
+            </h3>
+            <p className="text-gray-300">
+              All session data saved to Firebase. Access your progress history anytime, anywhere. Share reports with your therapist.
+            </p>
+          </div>
+        </div>
+
+        {/* Technical Specs */}
+        <div className="mt-20 bg-black bg-opacity-40 rounded-xl p-8 border border-gray-700">
+          <h3 className="text-2xl font-bold text-white mb-6 text-center">
+            🔬 Technical Excellence
+          </h3>
+          <div className="grid md:grid-cols-4 gap-6 text-center">
+            <div>
+              <div className="text-3xl font-bold text-green-400 mb-2">30-60 FPS</div>
+              <p className="text-gray-400 text-sm">Real-time tracking</p>
+            </div>
+            <div>
+              <div className="text-3xl font-bold text-purple-400 mb-2">&lt;50ms</div>
+              <p className="text-gray-400 text-sm">Processing latency</p>
+            </div>
+            <div>
+              <div className="text-3xl font-bold text-blue-400 mb-2">±2°</div>
+              <p className="text-gray-400 text-sm">Angle precision</p>
+            </div>
+            <div>
+              <div className="text-3xl font-bold text-yellow-400 mb-2">100%</div>
+              <p className="text-gray-400 text-sm">Client-side processing</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Use Cases */}
+        <div className="mt-20">
+          <h3 className="text-3xl font-bold text-white mb-10 text-center">
+            Who Is This For?
+          </h3>
+          <div className="grid md:grid-cols-2 gap-8">
+            {/* Patients */}
+            <div className="bg-gradient-to-br from-green-500 to-green-600 bg-opacity-20 rounded-xl p-8 border border-green-500">
+              <div className="text-5xl mb-4">🏋️</div>
+              <h4 className="text-2xl font-bold text-white mb-4">For Patients</h4>
+              <ul className="space-y-3 text-gray-200">
+                <li className="flex items-start">
+                  <span className="text-green-400 mr-2">✓</span>
+                  Post-surgery knee rehabilitation
+                </li>
+                <li className="flex items-start">
+                  <span className="text-green-400 mr-2">✓</span>
+                  ACL/MCL recovery tracking
+                </li>
+                <li className="flex items-start">
+                  <span className="text-green-400 mr-2">✓</span>
+                  Home-based exercise programs
+                </li>
+                <li className="flex items-start">
+                  <span className="text-green-400 mr-2">✓</span>
+                  Range of motion maintenance
+                </li>
+                <li className="flex items-start">
+                  <span className="text-green-400 mr-2">✓</span>
+                  Progress motivation & gamification
+                </li>
+              </ul>
+            </div>
+
+            {/* Therapists */}
+            <div className="bg-gradient-to-br from-purple-500 to-purple-600 bg-opacity-20 rounded-xl p-8 border border-purple-500">
+              <div className="text-5xl mb-4">👨‍⚕️</div>
+              <h4 className="text-2xl font-bold text-white mb-4">For Therapists</h4>
+              <ul className="space-y-3 text-gray-200">
+                <li className="flex items-start">
+                  <span className="text-purple-400 mr-2">✓</span>
+                  Remote patient monitoring
+                </li>
+                <li className="flex items-start">
+                  <span className="text-purple-400 mr-2">✓</span>
+                  Compliance tracking & reporting
+                </li>
+                <li className="flex items-start">
+                  <span className="text-purple-400 mr-2">✓</span>
+                  Multi-patient dashboards
+                </li>
+                <li className="flex items-start">
+                  <span className="text-purple-400 mr-2">✓</span>
+                  Data-driven treatment adjustments
+                </li>
+                <li className="flex items-start">
+                  <span className="text-purple-400 mr-2">✓</span>
+                  Objective outcome measurement
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        {/* CTA Section */}
+        <div className="mt-20 text-center">
+          <div className="bg-gradient-to-r from-green-500 to-purple-600 rounded-2xl p-12">
+            <h3 className="text-3xl font-bold text-white mb-4">
+              Ready to Transform Your Knee Recovery?
+            </h3>
+            <p className="text-xl text-gray-100 mb-8">
+              Join thousands using AI-powered physiotherapy monitoring
+            </p>
+            <div className="flex flex-col sm:flex-row justify-center gap-4">
+              <button
+                onClick={() => handleGetStarted('patient')}
+                className="px-8 py-4 bg-white text-purple-600 text-lg font-semibold rounded-lg shadow-lg transform transition hover:scale-105"
+              >
+                Get Started Free
+              </button>
+              <button
+                onClick={() => setShowAuth('login')}
+                className="px-8 py-4 bg-black bg-opacity-30 backdrop-blur-sm text-white text-lg font-semibold rounded-lg border border-white border-opacity-30 transform transition hover:scale-105"
+              >
+                Sign In
+              </button>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      {/* Footer */}
+      <footer className="bg-black bg-opacity-30 backdrop-blur-sm mt-20 py-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center text-gray-400">
+          <p className="text-sm">
+            © 2026 Phisi. Built with ❤️ using MediaPipe AI, React, and Firebase.
+          </p>
+          <p className="text-xs mt-2">
+            All video processing happens client-side. Your privacy is protected.
+          </p>
+        </div>
+      </footer>
+    </div>
+  );
+};
+
+export default LandingPage;

@@ -1,0 +1,335 @@
+/**
+ * Viewport.jsx
+ * Main webcam component with canvas overlay for pose visualization
+ * Integrates MediaPipe pose detection with real-time feedback
+ */
+
+import React, { useRef, useEffect, useState, useCallback } from 'react';
+import { usePoseEstimation } from '../hooks/usePoseEstimation';
+import { useSession } from '../context/SessionContext';
+import { FEEDBACK_STATES } from '../context/SessionContext';
+
+/**
+ * Viewport Component
+ * Displays webcam feed with pose overlay and real-time angle tracking
+ */
+const Viewport = () => {
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const animationFrameRef = useRef(null);
+
+  const [cameraReady, setCameraReady] = useState(false);
+  const [cameraError, setCameraError] = useState(null);
+
+  // Session context
+  const {
+    legSide,
+    currentAngle,
+    updateAngle,
+    detectRep,
+    feedbackState,
+    improvement,
+    reps
+  } = useSession();
+
+  // Memoize angle update callback to prevent infinite re-renders
+  const handleAngleUpdate = useCallback((angle) => {
+    updateAngle(angle);
+    detectRep(angle);
+  }, [updateAngle, detectRep]);
+
+  // Pose estimation hook
+  const {
+    isInitialized,
+    isLoading,
+    error: poseError,
+    processFrame,
+    drawLandmarks,
+    drawAngleVisualization
+  } = usePoseEstimation({
+    legSide,
+    enableSmoothing: true,
+    onAngleUpdate: handleAngleUpdate
+  });
+
+  /**
+   * Initialize webcam
+   */
+  useEffect(() => {
+    const startCamera = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            facingMode: 'user'
+          },
+          audio: false
+        });
+
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.addEventListener('loadedmetadata', () => {
+            setCameraReady(true);
+            console.log('✅ Camera initialized');
+          });
+        }
+      } catch (err) {
+        console.error('❌ Camera access failed:', err);
+        setCameraError(err.message);
+      }
+    };
+
+    startCamera();
+
+    // Cleanup
+    return () => {
+      if (videoRef.current && videoRef.current.srcObject) {
+        const tracks = videoRef.current.srcObject.getTracks();
+        tracks.forEach(track => track.stop());
+      }
+    };
+  }, []);
+
+  /**
+   * Main rendering loop
+   * Processes video frames and draws overlays
+   */
+  useEffect(() => {
+    if (!cameraReady || !isInitialized) return;
+
+    const renderLoop = async () => {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+
+      if (!video || !canvas) {
+        animationFrameRef.current = requestAnimationFrame(renderLoop);
+        return;
+      }
+
+      // Sync canvas size with video
+      if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+      }
+
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Process current frame
+      const timestamp = performance.now();
+      const poseData = await processFrame(video, timestamp);
+
+      if (poseData) {
+        // Determine overlay color based on feedback state
+        const overlayColor = getOverlayColor(feedbackState);
+
+        // Draw pose landmarks with feedback color
+        drawLandmarks(ctx, poseData.landmarks, overlayColor);
+
+        // Draw angle visualization
+        if (poseData.angle) {
+          drawAngleVisualization(
+            ctx,
+            poseData.hip,
+            poseData.knee,
+            poseData.ankle,
+            poseData.angle
+          );
+        }
+
+        // Draw feedback overlay
+        drawFeedbackOverlay(ctx, canvas, feedbackState);
+      }
+
+      // Continue loop
+      animationFrameRef.current = requestAnimationFrame(renderLoop);
+    };
+
+    renderLoop();
+
+    // Cleanup
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, [cameraReady, isInitialized, processFrame, drawLandmarks, drawAngleVisualization, feedbackState]);
+
+  /**
+   * Get overlay color based on feedback state
+   */
+  const getOverlayColor = (state) => {
+    switch (state) {
+      case FEEDBACK_STATES.EXCELLENT:
+        return '#00FF00'; // Bright green
+      case FEEDBACK_STATES.GOOD:
+        return '#7FFF00'; // Light green
+      case FEEDBACK_STATES.WARNING:
+        return '#FF0000'; // Red
+      default:
+        return '#FFFFFF'; // White (neutral)
+    }
+  };
+
+  /**
+   * Draw semi-transparent feedback overlay
+   */
+  const drawFeedbackOverlay = (ctx, canvas, state) => {
+    if (state === FEEDBACK_STATES.NEUTRAL) return;
+
+    ctx.save();
+
+    // Set overlay color with transparency
+    switch (state) {
+      case FEEDBACK_STATES.EXCELLENT:
+        ctx.fillStyle = 'rgba(0, 255, 0, 0.1)'; // Light green overlay
+        break;
+      case FEEDBACK_STATES.GOOD:
+        ctx.fillStyle = 'rgba(127, 255, 0, 0.08)';
+        break;
+      case FEEDBACK_STATES.WARNING:
+        ctx.fillStyle = 'rgba(255, 0, 0, 0.15)'; // Light red overlay
+        break;
+    }
+
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+  };
+
+  /**
+   * Get status message
+   */
+  const getStatusMessage = () => {
+    if (cameraError) return `Camera Error: ${cameraError}`;
+    if (poseError) return `Pose Detection Error: ${poseError}`;
+    if (!cameraReady) return 'Initializing camera...';
+    if (!isInitialized || isLoading) return 'Loading MediaPipe...';
+    return 'Ready';
+  };
+
+  return (
+    <div className="relative w-full h-full bg-gray-900 rounded-lg overflow-hidden">
+      {/* Video element (hidden, used for processing) */}
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted
+        className="absolute inset-0 w-full h-full object-cover"
+        style={{ transform: 'scaleX(-1)' }} // Mirror for better UX
+      />
+
+      {/* Canvas overlay for pose visualization */}
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 w-full h-full"
+        style={{ transform: 'scaleX(-1)' }} // Mirror to match video
+      />
+
+      {/* Status indicator */}
+      {(!isInitialized || isLoading || !cameraReady) && (
+        <div className="absolute top-4 left-4 bg-black bg-opacity-60 px-4 py-2 rounded-lg">
+          <div className="flex items-center space-x-2">
+            {(isLoading || !isInitialized) && (
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+            )}
+            <p className="text-white text-sm font-medium">
+              {getStatusMessage()}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Real-time stats overlay */}
+      <div className="absolute top-4 right-4 bg-black bg-opacity-70 px-6 py-4 rounded-lg space-y-2">
+        <div className="text-white">
+          <span className="text-gray-400 text-sm">Angle:</span>
+          <span className="text-2xl font-bold ml-2">
+            {currentAngle ? `${currentAngle}°` : '--'}
+          </span>
+        </div>
+        
+        <div className="text-white">
+          <span className="text-gray-400 text-sm">Reps:</span>
+          <span className="text-xl font-semibold ml-2">{reps}</span>
+        </div>
+
+        <div className="text-white">
+          <span className="text-gray-400 text-sm">Progress:</span>
+          <span className="text-lg font-semibold ml-2 text-green-400">
+            {improvement}%
+          </span>
+        </div>
+
+        {/* Feedback indicator */}
+        <div className="mt-3 pt-3 border-t border-gray-600">
+          <div className={`w-full h-2 rounded-full ${getFeedbackBarColor(feedbackState)}`} />
+          <p className="text-xs text-gray-300 mt-1 text-center">
+            {getFeedbackText(feedbackState)}
+          </p>
+        </div>
+      </div>
+
+      {/* Error overlay */}
+      {(cameraError || poseError) && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-80">
+          <div className="bg-red-600 text-white px-6 py-4 rounded-lg max-w-md">
+            <h3 className="text-lg font-bold mb-2">Error</h3>
+            <p className="text-sm">{cameraError || poseError}</p>
+            <button
+              onClick={() => window.location.reload()}
+              className="mt-4 px-4 py-2 bg-white text-red-600 rounded hover:bg-gray-100"
+            >
+              Reload
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Loading overlay - only show before camera is ready */}
+      {!cameraReady && !cameraError && !poseError && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-80">
+          <div className="text-white text-center">
+            <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-white mx-auto mb-4" />
+            <p className="text-lg">Initializing camera...</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/**
+ * Get feedback bar color based on state
+ */
+const getFeedbackBarColor = (state) => {
+  switch (state) {
+    case FEEDBACK_STATES.EXCELLENT:
+      return 'bg-green-500';
+    case FEEDBACK_STATES.GOOD:
+      return 'bg-lime-400';
+    case FEEDBACK_STATES.WARNING:
+      return 'bg-red-500';
+    default:
+      return 'bg-gray-500';
+  }
+};
+
+/**
+ * Get feedback text based on state
+ */
+const getFeedbackText = (state) => {
+  switch (state) {
+    case FEEDBACK_STATES.EXCELLENT:
+      return '✓ Target Reached!';
+    case FEEDBACK_STATES.GOOD:
+      return 'Good Progress';
+    case FEEDBACK_STATES.WARNING:
+      return '⚠ Below Baseline';
+    default:
+      return 'Neutral';
+  }
+};
+
+export default Viewport;
