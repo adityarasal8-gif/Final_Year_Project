@@ -112,6 +112,9 @@ const Signup = ({ userType, onSuccess, onBack, onSwitchToLogin }) => {
           createdAt: new Date().toISOString()
         };
 
+        // Always save the patient profile first
+        await saveUserProfile(userCredential.user.uid, profileData);
+
         if (patientType === 'with_therapist' && formData.therapistCode) {
           // Validate therapist code
           const validation = await validateTherapistCode(formData.therapistCode);
@@ -121,14 +124,12 @@ const Signup = ({ userType, onSuccess, onBack, onSwitchToLogin }) => {
             return;
           }
           
-          // Link patient to therapist
+          // Link patient to therapist (profile already exists, safe to update)
           await linkPatientToTherapist(
             userCredential.user.uid,
             validation.therapist.id,
             formData.therapistCode.toUpperCase()
           );
-        } else {
-          await saveUserProfile(userCredential.user.uid, profileData);
         }
       }
 
@@ -210,6 +211,9 @@ const Signup = ({ userType, onSuccess, onBack, onSwitchToLogin }) => {
           createdAt: new Date().toISOString()
         };
 
+        // Always save the patient profile first
+        await saveUserProfile(result.user.uid, profileData);
+
         if (patientType === 'with_therapist' && formData.therapistCode) {
           // Validate therapist code
           const validation = await validateTherapistCode(formData.therapistCode);
@@ -219,14 +223,12 @@ const Signup = ({ userType, onSuccess, onBack, onSwitchToLogin }) => {
             return;
           }
           
-          // Link patient to therapist
+          // Link patient to therapist (profile already exists, safe to update)
           await linkPatientToTherapist(
             result.user.uid,
             validation.therapist.id,
             formData.therapistCode.toUpperCase()
           );
-        } else {
-          await saveUserProfile(result.user.uid, profileData);
         }
       }
 

@@ -4,11 +4,14 @@
  * Shows exercise history, progress, and quick actions
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { switchPatientMode, validateTherapistCode } from '../utils/firestore';
+import { switchPatientMode, validateTherapistCode, getUserSessions } from '../utils/firestore';
 import { exerciseLibrary } from '../data/exercises';
 import ExerciseDemo from './ExerciseDemo';
+import PhysioLogo from './PhysioLogo';
+import { auth } from '../firebase';
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 
 // Simple SVG Icons
 const PlayIcon = ({ className }) => (
@@ -83,9 +86,9 @@ const ActivityIcon = ({ className }) => (
 );
 
 const SettingsIcon = ({ className }) => (
-  <svg className={className} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-    <circle cx="12" cy="12" r="3"/>
-    <path d="M12 1v6m0 6v6m5.196-15.804L13.854 6.54m-3.708 10.92L6.804 20.804m13.392-13.392l-3.342 3.342m-10.92 3.708L2.59 17.804M23 12h-6m-6 0H1"/>
+  <svg className={className} fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
+    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
   </svg>
 );
 
@@ -96,7 +99,7 @@ const XIcon = ({ className }) => (
   </svg>
 );
 
-const PatientDashboard = ({ user, onStartSession, onNavigate }) => {
+const PatientDashboard = ({ user, onStartSession, onNavigate, onLogout }) => {
   const [selectedExercise, setSelectedExercise] = useState(null);
   const [showExerciseDemo, setShowExerciseDemo] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -105,19 +108,74 @@ const PatientDashboard = ({ user, onStartSession, onNavigate }) => {
   const [modeError, setModeError] = useState(null);
   const [modeSuccess, setModeSuccess] = useState(null);
 
-  // Mock data - in production, fetch from Firebase
-  const stats = {
-    totalSessions: 24,
-    weekStreak: 5,
-    avgAngleImprovement: 12,
-    nextGoal: 145
-  };
+  // Real session history state
+  const [sessionHistory, setSessionHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
 
-  const recentSessions = [
-    { id: 1, date: '2026-02-12', angle: 138, duration: 12, reps: 15 },
-    { id: 2, date: '2026-02-11', angle: 135, duration: 10, reps: 12 },
-    { id: 3, date: '2026-02-10', angle: 132, duration: 11, reps: 14 },
-  ];
+  // Fetch real session history from Firebase on mount
+  useEffect(() => {
+    const fetchHistory = async () => {
+      if (!user?.uid || user?.isDemo) {
+        // Demo / unauthenticated: show placeholder data
+        setSessionHistory([
+          { id: 1, date: '2026-03-08', exerciseName: 'Knee Flexion', maxAngle: 118, duration: 12, totalReps: 15, improvement: 8 },
+          { id: 2, date: '2026-03-06', exerciseName: 'Knee Flexion', maxAngle: 112, duration: 10, totalReps: 12, improvement: 5 },
+          { id: 3, date: '2026-03-04', exerciseName: 'Knee Extension', maxAngle: 108, duration: 11, totalReps: 14, improvement: 3 },
+        ]);
+        setHistoryLoading(false);
+        return;
+      }
+      setHistoryLoading(true);
+      try {
+        const result = await getUserSessions(user.uid, 20);
+        if (result.success && result.data.length > 0) {
+          const formatted = result.data.map((s) => ({
+            id: s.id,
+            date: s.createdAt?.toDate
+              ? s.createdAt.toDate().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+              : new Date(s.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+            exerciseName: s.exerciseName || 'Exercise',
+            maxAngle: Math.round(s.maxAngle || 0),
+            duration: Math.round((s.duration || 0) / 60) || 1,
+            totalReps: s.totalReps || 0,
+            improvement: s.improvement || 0,
+          }));
+          setSessionHistory(formatted);
+        }
+      } catch (err) {
+        console.error('Error loading session history:', err);
+      } finally {
+        setHistoryLoading(false);
+      }
+    };
+    fetchHistory();
+  }, [user?.uid, user?.isDemo]);
+
+  // Compute stats from real session data
+  const stats = (() => {
+    if (sessionHistory.length === 0) return { totalSessions: 0, weekStreak: 0, avgAngleImprovement: 0, nextGoal: 145 };
+    const angles = sessionHistory.map(s => s.maxAngle);
+    const first = angles[angles.length - 1] || 0;
+    const latest = angles[0] || 0;
+    const avgImprovement = first > 0 ? Math.round(((latest - first) / first) * 100) : 0;
+    // streak: count consecutive days from today
+    let streak = 0;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    // (simplified streak calculation based on session count in last 7 days)
+    return {
+      totalSessions: sessionHistory.length,
+      weekStreak: Math.min(sessionHistory.length, 7),
+      avgAngleImprovement: Math.max(0, avgImprovement),
+      nextGoal: Math.min(180, (Math.max(...angles) || 90) + 10)
+    };
+  })();
+
+  // Chart data: oldest→newest for improvement sparkline
+  const chartData = [...sessionHistory].reverse().map((s, i) => ({
+    session: i + 1,
+    angle: s.maxAngle,
+    label: s.date,
+  }));
 
   // Use exercise library instead of hardcoded exercises
   const exercises = exerciseLibrary;
@@ -144,16 +202,26 @@ const PatientDashboard = ({ user, onStartSession, onNavigate }) => {
         }
 
         const validation = await validateTherapistCode(therapistCodeInput.trim());
-        if (!validation.valid) {
+        if (!validation.success) {
           setModeError('Invalid therapist code. Please check and try again.');
           setSwitchingMode(false);
           return;
         }
 
-        await switchPatientMode(user.uid, newMode, therapistCodeInput.trim());
+        const switchResult = await switchPatientMode(user.uid, newMode, therapistCodeInput.trim());
+        if (!switchResult.success) {
+          setModeError('Failed to connect with therapist. Please try again.');
+          setSwitchingMode(false);
+          return;
+        }
       } else {
         // Switching to independent
-        await switchPatientMode(user.uid, newMode);
+        const switchResult = await switchPatientMode(user.uid, newMode);
+        if (!switchResult.success) {
+          setModeError('Failed to switch mode. Please try again.');
+          setSwitchingMode(false);
+          return;
+        }
       }
 
       setModeSuccess(`Successfully switched to ${newMode === 'independent' ? 'Independent Mode' : 'With Therapist Mode'}`);
@@ -200,17 +268,30 @@ const PatientDashboard = ({ user, onStartSession, onNavigate }) => {
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* Settings Button */}
-      <div className="flex justify-end mb-4">
-        <button
-          onClick={() => setShowSettingsModal(true)}
-          className="flex items-center gap-2 px-4 py-2 text-medical-text-secondary hover:text-medical-primary transition-colors"
-        >
-          <SettingsIcon className="w-5 h-5" />
-          <span className="text-sm font-medium">Settings</span>
-        </button>
+    <div className="min-h-screen bg-medical-background">
+    {/* ── Physio Top Bar ── */}
+    <div className="bg-white border-b border-gray-200 px-6 py-3 flex justify-between items-center sticky top-0 z-20 shadow-sm">
+      <div className="flex items-center gap-3">
+        <div className="bg-gradient-to-br from-teal-500 to-cyan-600 rounded-lg p-2">
+          <PhysioLogo className="w-5 h-5" color="white" />
+        </div>
+        <div>
+          <h1 className="text-base font-bold text-medical-text-primary leading-tight">Physio</h1>
+          <p className="text-xs text-medical-text-secondary">
+            {user?.isDemo && '🚀 Demo • '}{user?.name || user?.email}
+          </p>
+        </div>
       </div>
+      <button
+        onClick={() => setShowSettingsModal(true)}
+        aria-label="Settings"
+        className="p-2 rounded-xl hover:bg-gray-100 text-medical-text-secondary hover:text-medical-primary transition-colors"
+      >
+        <SettingsIcon className="w-6 h-6" />
+      </button>
+    </div>
+
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
 
       {/* Welcome Section */}
       <motion.div
@@ -427,8 +508,9 @@ const PatientDashboard = ({ user, onStartSession, onNavigate }) => {
           </motion.div>
         </div>
 
-        {/* Right Column - Recent Activity */}
+        {/* Right Column - Session History & Improvement */}
         <div className="space-y-6">
+          {/* Improvement Sparkline Chart */}
           <motion.div
             initial="hidden"
             animate="visible"
@@ -436,48 +518,102 @@ const PatientDashboard = ({ user, onStartSession, onNavigate }) => {
             transition={{ delay: 0.7 }}
             className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm"
           >
+            <h2 className="text-xl font-bold text-medical-text-primary mb-1 flex items-center gap-2">
+              <TrendingUpIcon className="w-6 h-6 text-green-500" />
+              ROM Improvement
+            </h2>
+            <p className="text-xs text-medical-text-secondary mb-4">Max knee angle per session</p>
+            {historyLoading ? (
+              <div className="flex items-center justify-center h-28">
+                <div className="w-8 h-8 border-4 border-medical-primary/30 border-t-medical-primary rounded-full animate-spin" />
+              </div>
+            ) : chartData.length > 0 ? (
+              <ResponsiveContainer width="100%" height={160}>
+                <AreaChart data={chartData} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
+                  <defs>
+                    <linearGradient id="colorAngle" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#0D9488" stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor="#0D9488" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" />
+                  <XAxis dataKey="label" tick={{ fontSize: 10 }} stroke="#9CA3AF" />
+                  <YAxis tick={{ fontSize: 10 }} stroke="#9CA3AF" domain={['auto','auto']} />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: '#fff', border: 'none', borderRadius: 10, boxShadow: '0 4px 20px rgba(0,0,0,0.08)', fontSize: 12 }}
+                    formatter={(v) => [`${v}°`, 'Max Angle']}
+                  />
+                  <Area type="monotone" dataKey="angle" stroke="#0D9488" fill="url(#colorAngle)" strokeWidth={2.5} dot={{ r: 3, fill: '#0D9488' }} />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-28 flex flex-col items-center justify-center text-center">
+                <ActivityIcon className="w-8 h-8 text-gray-300 mb-2" />
+                <p className="text-sm text-gray-400">Complete your first session to see progress</p>
+              </div>
+            )}
+          </motion.div>
+
+          {/* Recent Sessions List */}
+          <motion.div
+            initial="hidden"
+            animate="visible"
+            variants={fadeInUp}
+            transition={{ delay: 0.75 }}
+            className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm"
+          >
             <h2 className="text-xl font-bold text-medical-text-primary mb-4 flex items-center gap-2">
               <BarChartIcon className="w-6 h-6 text-medical-secondary" />
-              Recent Sessions
+              Session History
             </h2>
-            <div className="space-y-3">
-              {recentSessions.map((session) => (
-                <div
-                  key={session.id}
-                  className="p-4 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-medium text-medical-text-primary">
-                      {new Date(session.date).toLocaleDateString('en-US', { 
-                        month: 'short', 
-                        day: 'numeric' 
-                      })}
-                    </span>
-                    <CheckCircleIcon className="w-5 h-5 text-green-500" />
+            {historyLoading ? (
+              <div className="space-y-3">
+                {[1,2,3].map(i => (
+                  <div key={i} className="h-16 bg-gray-100 rounded-xl animate-pulse" />
+                ))}
+              </div>
+            ) : sessionHistory.length > 0 ? (
+              <div className="space-y-3 max-h-[360px] overflow-y-auto pr-1">
+                {sessionHistory.map((session) => (
+                  <div
+                    key={session.id}
+                    className="p-4 border border-gray-100 rounded-xl hover:bg-gray-50 transition-colors"
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div>
+                        <span className="text-sm font-semibold text-medical-text-primary">{session.date}</span>
+                        <span className="ml-2 text-xs text-gray-400">{session.exerciseName}</span>
+                      </div>
+                      {session.improvement > 0 ? (
+                        <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded-full">+{session.improvement}%</span>
+                      ) : (
+                        <CheckCircleIcon className="w-5 h-5 text-green-500" />
+                      )}
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 text-xs text-medical-text-secondary">
+                      <div>
+                        <div className="font-bold text-medical-primary text-sm">{session.maxAngle}°</div>
+                        <div>Max Angle</div>
+                      </div>
+                      <div>
+                        <div className="font-semibold text-medical-text-primary">{session.duration}m</div>
+                        <div>Duration</div>
+                      </div>
+                      <div>
+                        <div className="font-semibold text-medical-text-primary">{session.totalReps}</div>
+                        <div>Reps</div>
+                      </div>
+                    </div>
                   </div>
-                  <div className="grid grid-cols-3 gap-2 text-xs text-medical-text-secondary">
-                    <div>
-                      <div className="font-semibold text-medical-text-primary">
-                        {session.angle}°
-                      </div>
-                      <div>Max Angle</div>
-                    </div>
-                    <div>
-                      <div className="font-semibold text-medical-text-primary">
-                        {session.duration}m
-                      </div>
-                      <div>Duration</div>
-                    </div>
-                    <div>
-                      <div className="font-semibold text-medical-text-primary">
-                        {session.reps}
-                      </div>
-                      <div>Reps</div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <div className="py-10 text-center">
+                <CalendarIcon className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+                <p className="text-sm text-gray-500 font-medium">No sessions yet</p>
+                <p className="text-xs text-gray-400 mt-1">Complete an exercise to see your history here</p>
+              </div>
+            )}
           </motion.div>
 
           {/* Progress Tip */}
@@ -485,7 +621,7 @@ const PatientDashboard = ({ user, onStartSession, onNavigate }) => {
             initial="hidden"
             animate="visible"
             variants={fadeInUp}
-            transition={{ delay: 0.8 }}
+            transition={{ delay: 0.85 }}
             className="bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl p-6 text-white shadow-lg"
           >
             <div className="text-3xl mb-3">💡</div>
@@ -497,8 +633,10 @@ const PatientDashboard = ({ user, onStartSession, onNavigate }) => {
         </div>
       </div>
 
-      {/* Settings Modal */}
-      <AnimatePresence>
+    </div>{/* end inner px wrapper */}
+
+    {/* Settings Modal */}
+    <AnimatePresence>
         {showSettingsModal && (
           <motion.div
             initial={{ opacity: 0 }}
@@ -596,23 +734,24 @@ const PatientDashboard = ({ user, onStartSession, onNavigate }) => {
                 </button>
               </div>
 
-              {/* Additional Settings */}
+              {/* Logout */}
               <div className="pt-4 border-t border-gray-200">
                 <button
                   onClick={() => {
                     setShowSettingsModal(false);
-                    onNavigate('login');
+                    if (onLogout) onLogout();
+                    else if (onNavigate) onNavigate('login');
                   }}
-                  className="w-full py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                  className="w-full py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors font-medium"
                 >
-                  Logout
+                  Sign Out
                 </button>
               </div>
             </motion.div>
           </motion.div>
         )}
-      </AnimatePresence>
-    </div>
+    </AnimatePresence>
+  </div>
   );
 };
 

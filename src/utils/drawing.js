@@ -162,15 +162,23 @@ export const drawLegSkeleton = (ctx, landmarks, feedbackState = {}) => {
   const shouldDrawLeft = legSide === 'left' || legSide === 'both';
   const shouldDrawRight = legSide === 'right' || legSide === 'both';
 
-  // Draw connections (skeleton lines) - REDUCED VISIBILITY THRESHOLD
+  // Draw connections (skeleton lines)
+  // A connection is only drawn when BOTH endpoints are:
+  //   (a) above the visibility threshold, AND
+  //   (b) within the normalised frame bounds (guard against MediaPipe placing
+  //       landmarks off-screen when the upper body is not in view).
+  const isInBounds = (lm) =>
+    lm.x > -0.05 && lm.x < 1.05 && lm.y > -0.05 && lm.y < 1.05;
+
   LEG_CONNECTIONS.forEach(([startIdx, endIdx]) => {
     const startLandmark = landmarks[startIdx];
     const endLandmark = landmarks[endIdx];
 
     if (!startLandmark || !endLandmark) return;
 
-    // More lenient visibility check (0.35 instead of 0.5) to reduce jitter
-    if (startLandmark.visibility < 0.35 || endLandmark.visibility < 0.35) return;
+    // Raised threshold (0.45) + bounds check to avoid jittery / off-screen bones
+    if (startLandmark.visibility < 0.45 || endLandmark.visibility < 0.45) return;
+    if (!isInBounds(startLandmark) || !isInBounds(endLandmark)) return;
 
     // Determine if this is left or right leg connection
     const isLeftLeg = (
@@ -220,10 +228,11 @@ export const drawLegSkeleton = (ctx, landmarks, feedbackState = {}) => {
     ctx.shadowBlur = 0;
   });
 
-  // Draw landmark points (joints) - REDUCED VISIBILITY THRESHOLD
+  // Draw landmark points (joints)
   Object.values(LOWER_BODY_LANDMARKS).forEach((index) => {
     const landmark = landmarks[index];
-    if (!landmark || landmark.visibility < 0.35) return;
+    if (!landmark || landmark.visibility < 0.45) return;
+    if (!isInBounds(landmark)) return;
 
     // Determine if this landmark is left or right
     const isLeftLandmark = [23, 25, 27, 29, 31].includes(index);

@@ -277,15 +277,15 @@ export const linkPatientToTherapist = async (patientId, therapistId, therapistCo
   if (!isFirebaseConfigured()) return { success: false, error: 'Firebase not configured' };
   
   try {
-    // Update patient profile
-    await updateDoc(doc(db, 'users', patientId), {
+    // Use setDoc with merge:true so it works whether the doc exists or not
+    await setDoc(doc(db, 'users', patientId), {
       therapistId,
       therapistCode,
       hasTherapist: true,
       patientType: 'with_therapist',
       linkedAt: serverTimestamp(),
       updatedAt: serverTimestamp()
-    });
+    }, { merge: true });
     
     // Update therapist's linked patients list
     const therapistDoc = await getDoc(doc(db, 'users', therapistId));
@@ -324,7 +324,7 @@ export const switchPatientMode = async (patientId, newMode, therapistCode = null
     };
     
     if (newMode === 'with_therapist' && therapistCode) {
-      // Validate and link to therapist
+      // Validate therapist code and get therapist ID
       const validation = await validateTherapistCode(therapistCode);
       if (!validation.success) {
         return validation;
@@ -333,40 +333,13 @@ export const switchPatientMode = async (patientId, newMode, therapistCode = null
       updates.therapistId = validation.therapist.id;
       updates.therapistCode = therapistCode.toUpperCase();
       updates.linkedAt = serverTimestamp();
-      
-      // Update therapist's linked patients
-      const therapistDoc = await getDoc(doc(db, 'users', validation.therapist.id));
-      if (therapistDoc.exists()) {
-        const linkedPatients = therapistDoc.data().linkedPatients || [];
-        if (!linkedPatients.includes(patientId)) {
-          linkedPatients.push(patientId);
-          await updateDoc(doc(db, 'users', validation.therapist.id), {
-            linkedPatients,
-            updatedAt: serverTimestamp()
-          });
-        }
-      }
+      // Note: therapist's linkedPatients is not updated here because the patient
+      // does not have write permission on the therapist's document.
+      // The therapist dashboard queries patients by therapistId directly.
     } else if (newMode === 'independent') {
-      // Remove therapist link
-      const patientDoc = await getDoc(doc(db, 'users', patientId));
-      if (patientDoc.exists()) {
-        const oldTherapistId = patientDoc.data().therapistId;
-        if (oldTherapistId) {
-          // Remove from therapist's linked patients
-          const therapistDoc = await getDoc(doc(db, 'users', oldTherapistId));
-          if (therapistDoc.exists()) {
-            const linkedPatients = therapistDoc.data().linkedPatients || [];
-            const updated = linkedPatients.filter(id => id !== patientId);
-            await updateDoc(doc(db, 'users', oldTherapistId), {
-              linkedPatients: updated,
-              updatedAt: serverTimestamp()
-            });
-          }
-        }
-      }
-      
       updates.therapistId = null;
       updates.therapistCode = null;
+      updates.hasTherapist = false;
     }
     
     await updateDoc(doc(db, 'users', patientId), updates);

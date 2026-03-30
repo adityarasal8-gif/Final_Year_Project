@@ -42,15 +42,27 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
   const canvasRef = useRef(null);
   const animationFrameRef = useRef(null);
   const containerRef = useRef(null);
-  const holdTimerRef = useRef(null);
-
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [isHolding, setIsHolding] = useState(false);
-  const [holdProgress, setHoldProgress] = useState(0);
   const [calibrationReps, setCalibrationReps] = useState([]);
   const [isCalibrating, setIsCalibrating] = useState(true);
+
+  // Draggable overlay panel positions (in px, relative to viewport)
+  const [overlayPositions, setOverlayPositions] = useState({
+    reps: { x: 16, y: 16 },
+    metrics: { x: 0, y: 80 },
+    form: { x: 16, y: 0 },
+    progress: { x: 0, y: 0 },
+    calibration: { x: 0, y: 16 }
+  });
+  const dragStateRef = useRef({ key: null, offsetX: 0, offsetY: 0 });
+
+  // Refs to avoid render loop re-creation on every angle update
+  const baselineROMRef = useRef(null);
+  const legSideRef = useRef('left');
+  const leftAngleRef = useRef(null);
+  const rightAngleRef = useRef(null);
 
   // Session context
   const {
@@ -67,14 +79,15 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
     startSession,
     endSession,
     currentSet,
-    setLegSide
+    setLegSide,
+    setTargetROM
   } = useSession();
 
   // Memoize angle update callback
   const handleAngleUpdate = useCallback((primaryAngle, angles) => {
     updateAngle(primaryAngle);
-    detectRep(primaryAngle);
-  }, [updateAngle, detectRep]);
+    detectRep(primaryAngle, exercise?.repDetection || null);
+  }, [updateAngle, detectRep, exercise]);
 
   // Pose estimation hook
   const {
@@ -94,13 +107,120 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
 
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
+  useEffect(() => {
+    baselineROMRef.current = baselineROM;
+  }, [baselineROM]);
+
+  useEffect(() => {
+    legSideRef.current = legSide;
+  }, [legSide]);
+
+  useEffect(() => {
+    leftAngleRef.current = detectedLeftAngle;
+  }, [detectedLeftAngle]);
+
+  useEffect(() => {
+    rightAngleRef.current = detectedRightAngle;
+  }, [detectedRightAngle]);
+
+  const getPanelStyle = useCallback((key) => {
+    const pos = overlayPositions[key];
+    if (!pos) return {};
+
+    // Panels that default from right or bottom are anchored accordingly.
+    if (key === 'metrics') {
+      return { right: `${Math.max(16, pos.x)}px`, top: `${Math.max(16, pos.y)}px` };
+    }
+    if (key === 'form') {
+      return { left: `${Math.max(8, pos.x)}px`, bottom: `${Math.max(8, pos.y)}px` };
+    }
+    if (key === 'progress') {
+      return { left: `${Math.max(80, pos.x)}px`, right: `${Math.max(24, pos.y)}px`, bottom: '16px' };
+    }
+    if (key === 'calibration') {
+      return {
+        left: '50%',
+        transform: `translateX(-50%) translate(${Math.max(-260, Math.min(260, pos.x))}px, ${Math.max(8, pos.y)}px)`
+      };
+    }
+
+    return { left: `${Math.max(8, pos.x)}px`, top: `${Math.max(8, pos.y)}px` };
+  }, [overlayPositions]);
+
+  const startDrag = useCallback((event, key) => {
+    if (!containerRef.current) return;
+
+    const panelRect = event.currentTarget.getBoundingClientRect();
+    dragStateRef.current = {
+      key,
+      offsetX: event.clientX - panelRect.left,
+      offsetY: event.clientY - panelRect.top
+    };
+  }, []);
+
+  useEffect(() => {
+    const handlePointerMove = (event) => {
+      const drag = dragStateRef.current;
+      if (!drag.key || !containerRef.current) return;
+
+      const containerRect = containerRef.current.getBoundingClientRect();
+      const x = event.clientX - containerRect.left - drag.offsetX;
+      const y = event.clientY - containerRect.top - drag.offsetY;
+
+      setOverlayPositions((prev) => {
+        if (drag.key === 'metrics') {
+          // Store as right/top to preserve right-side anchoring feel.
+          const right = Math.max(8, containerRect.width - (x + 180));
+          return { ...prev, metrics: { x: right, y: Math.max(8, y) } };
+        }
+
+        if (drag.key === 'form') {
+          // Store as left/bottom.
+          const bottom = Math.max(8, containerRect.height - (y + 120));
+          return { ...prev, form: { x: Math.max(8, x), y: bottom } };
+        }
+
+        if (drag.key === 'calibration') {
+          const centeredX = x - containerRect.width / 2 + 180;
+          return {
+            ...prev,
+            calibration: {
+              x: Math.max(-260, Math.min(260, centeredX)),
+              y: Math.max(8, y)
+            }
+          };
+        }
+
+        return {
+          ...prev,
+          [drag.key]: { x: Math.max(8, x), y: Math.max(8, y) }
+        };
+      });
+    };
+
+    const handlePointerUp = () => {
+      dragStateRef.current = { key: null, offsetX: 0, offsetY: 0 };
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, []);
+
   // Initialize exercise and set leg side from selectedLeg prop
   useEffect(() => {
     if (selectedLeg) {
       setLegSide(selectedLeg);
       console.log('Exercise loaded:', exercise.name, 'Leg:', selectedLeg);
     }
-  }, [exercise, selectedLeg, setLegSide]);
+    if (exercise?.targetAngle) {
+      setTargetROM(exercise.targetAngle);
+    }
+  }, [exercise, selectedLeg, setLegSide, setTargetROM]);
 
   // Set phase to CALIBRATION when camera is ready
   useEffect(() => {
@@ -189,16 +309,16 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
       const poseData = await processFrame(video, timestamp);
 
       if (poseData && poseData.landmarks) {
-        const leftLegColor = getLegColor(detectedLeftAngle, baselineROM, 135);
-        const rightLegColor = getLegColor(detectedRightAngle, baselineROM, 135);
+        const leftLegColor = getLegColor(leftAngleRef.current, baselineROMRef.current, 135);
+        const rightLegColor = getLegColor(rightAngleRef.current, baselineROMRef.current, 135);
 
         drawLegSkeleton(ctx, poseData.landmarks, {
           leftLegColor,
           rightLegColor,
-          leftAngle: detectedLeftAngle,
-          rightAngle: detectedRightAngle,
+          leftAngle: leftAngleRef.current,
+          rightAngle: rightAngleRef.current,
           lineWidth: 5,
-          legSide
+          legSide: legSideRef.current
         });
       }
 
@@ -216,10 +336,7 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
     cameraReady,
     isInitialized,
     processFrame,
-    detectedLeftAngle,
-    detectedRightAngle,
-    baselineROM,
-    legSide
+    // Intentionally exclude rapidly changing values here; they are read from refs.
   ]);
 
   /**
@@ -294,30 +411,14 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
   }, []);
 
   /**
-   * Press & Hold to End
+   * Exit session handler
    */
-  const handlePressStart = () => {
-    setIsHolding(true);
-    let progress = 0;
-    
-    holdTimerRef.current = setInterval(() => {
-      progress += 2;
-      setHoldProgress(progress);
-      
-      if (progress >= 100) {
-        clearInterval(holdTimerRef.current);
-        const sessionData = endSession();
-        onEndSession?.(sessionData);
-      }
-    }, 20);
-  };
-
-  const handlePressEnd = () => {
-    setIsHolding(false);
-    setHoldProgress(0);
-    if (holdTimerRef.current) {
-      clearInterval(holdTimerRef.current);
+  const handleExitSession = () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
     }
+    const sessionData = endSession();
+    onEndSession?.(sessionData);
   };
 
   /**
@@ -368,176 +469,144 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
       <AnimatePresence>
         {cameraReady && isInitialized && (phase === SESSION_PHASES.CALIBRATION || phase === SESSION_PHASES.EXERCISE) && (
           <>
-            {/* Prominent Reps Counter (Top Left Corner) - Only show during EXERCISE phase */}
+            {/* ── TOP-LEFT: Reps Counter (EXERCISE only) ── */}
             {phase === SESSION_PHASES.EXERCISE && (
               <motion.div
                 initial={{ opacity: 0, scale: 0.8 }}
                 animate={{ opacity: 1, scale: 1 }}
-                className="absolute top-6 left-6 z-30"
+                className="absolute z-30 cursor-move touch-none"
+                style={getPanelStyle('reps')}
+                onPointerDown={(e) => startDrag(e, 'reps')}
               >
-                <div className="bg-gradient-to-br from-teal-600 to-cyan-700 rounded-2xl p-6 shadow-2xl border-2 border-white/20">
-                  <div className="text-center">
-                    <div className="text-white/80 text-sm font-medium mb-1">REPS</div>
-                    <motion.div
-                      key={reps}
-                      initial={{ scale: 1.3 }}
-                      animate={{ scale: 1 }}
-                      className="text-white text-6xl font-black leading-none"
-                    >
-                      {reps}
-                    </motion.div>
-                    <div className="text-teal-200 text-xs font-medium mt-1">/ {exercise.targetReps * exercise.targetSets}</div>
+                <div className="bg-gradient-to-br from-teal-600/90 to-cyan-700/90 backdrop-blur-md rounded-2xl px-5 py-4 shadow-2xl border border-white/20">
+                  <div className="text-white/70 text-xs font-semibold tracking-widest uppercase mb-0.5">Reps</div>
+                  <motion.div
+                    key={reps}
+                    initial={{ scale: 1.3 }}
+                    animate={{ scale: 1 }}
+                    className="text-white text-5xl font-black leading-none"
+                  >
+                    {reps}
+                  </motion.div>
+                  <div className="text-teal-200 text-xs font-medium mt-1">/ {exercise.targetReps * exercise.targetSets} total</div>
+                  {exercise.targetSets > 1 && (
+                    <div className="text-white/60 text-xs mt-0.5">Set {currentSet}/{exercise.targetSets}</div>
+                  )}
+                </div>
+              </motion.div>
+            )}
+
+            {/* ── RIGHT SIDE: Exercise Info Panel (always visible, below exit button) ── */}
+            <motion.div
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              className="absolute z-30 cursor-move touch-none"
+              style={getPanelStyle('metrics')}
+              onPointerDown={(e) => startDrag(e, 'metrics')}
+            >
+              <div className="bg-black/80 backdrop-blur-md rounded-2xl p-4 border border-white/10 shadow-2xl w-[180px]">
+                <div className="flex items-center gap-2 mb-3 pb-2 border-b border-white/10">
+                  <div className="w-8 h-8 bg-gradient-to-br from-teal-400 to-cyan-500 rounded-lg flex items-center justify-center text-white font-bold text-sm shrink-0">
+                    {exercise.name.charAt(0)}
+                  </div>
+                  <div className="overflow-hidden">
+                    <h2 className="text-white font-bold text-xs leading-tight truncate">{exercise.name}</h2>
+                    <div className="text-teal-400 text-[10px] font-semibold uppercase">{selectedLeg} leg</div>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  {phase === SESSION_PHASES.CALIBRATION ? (
+                    <div className="text-center py-1">
+                      <span className="text-yellow-400 text-xs font-bold animate-pulse">CALIBRATING…</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400 text-[10px]">Set</span>
+                      <span className="text-white text-xs font-bold">{currentSet} / {exercise.targetSets}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400 text-[10px]">Target</span>
+                    <span className="text-cyan-400 text-xs font-bold">{exercise.targetAngle}°</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400 text-[10px]">Baseline</span>
+                    <span className="text-amber-400 text-xs font-bold">{baselineROM || '--'}°</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400 text-[10px]">Current</span>
+                    <span className="text-teal-400 text-xs font-bold">{Math.round(currentAngle || 0)}°</span>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+
+            {/* ── BOTTOM-LEFT: Form Quality (EXERCISE only) ── */}
+            {phase === SESSION_PHASES.EXERCISE && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="absolute z-30 cursor-move touch-none"
+                style={getPanelStyle('form')}
+                onPointerDown={(e) => startDrag(e, 'form')}
+              >
+                <div className="bg-black/80 backdrop-blur-md rounded-2xl p-3 border border-white/10 shadow-2xl">
+                  <div className="text-white/70 text-[10px] font-semibold mb-2 text-center tracking-widest uppercase">Form</div>
+                  <div className="flex flex-col gap-2">
+                    {[
+                      { key: 'excellent', color: '#10B981', glow: 'rgba(16,185,129,0.8)', label: 'Excellent' },
+                      { key: 'good',      color: '#F59E0B', glow: 'rgba(245,158,11,0.8)',  label: 'Good'      },
+                      { key: 'poor',      color: '#EF4444', glow: 'rgba(239,68,68,0.8)',   label: 'Needs work'},
+                    ].map(({ key, color, glow, label }) => (
+                      <div key={key} className="flex items-center gap-2">
+                        <motion.div
+                          animate={{
+                            backgroundColor: formQuality === key ? color : '#1F2937',
+                            boxShadow: formQuality === key ? `0 0 14px ${glow}` : 'none',
+                          }}
+                          className="w-5 h-5 rounded-full border border-white/20 shrink-0"
+                        />
+                        <span className={`text-[10px] font-medium ${formQuality === key ? 'text-white' : 'text-gray-600'}`}>
+                          {label}
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </motion.div>
             )}
 
-            {/* Exercise Info Panel (Top Right Corner) */}
-            <motion.div
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              className="absolute top-6 right-6 z-30"
-            >
-              <div className="bg-black/80 backdrop-blur-md rounded-2xl p-5 border border-white/10 shadow-2xl min-w-[220px]">
-                <div className="flex items-center gap-3 mb-4 pb-3 border-b border-white/10">
-                  <div className="w-10 h-10 bg-gradient-to-br from-teal-400 to-cyan-500 rounded-lg flex items-center justify-center text-white font-bold text-lg">
-                    {exercise.name.charAt(0)}
-                  </div>
-                  <div className="flex-1">
-                    <h2 className="text-white font-bold text-sm leading-tight">{exercise.name}</h2>
-                    <div className="text-teal-400 text-xs font-semibold">{selectedLeg.toUpperCase()} LEG</div>
-                  </div>
-                </div>
-                
-                {/* Exercise Metrics */}
-                <div className="space-y-2.5">
-                  {phase === SESSION_PHASES.CALIBRATION ? (
-                    <div className="flex items-center justify-center py-2">
-                      <span className="text-yellow-400 text-sm font-bold animate-pulse">📏 CALIBRATING</span>
-                    </div>
-                  ) : (
-                    <div className="flex items-center justify-between">
-                      <span className="text-gray-400 text-xs font-medium">Set:</span>
-                      <span className="text-white text-sm font-bold">{currentSet} / {exercise.targetSets}</span>
-                    </div>
-                  )}
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-400 text-xs font-medium">Target:</span>
-                    <span className="text-cyan-400 text-sm font-bold">{exercise.targetAngle}°</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-400 text-xs font-medium">Baseline:</span>
-                    <span className="text-amber-400 text-sm font-bold">{baselineROM || '--'}°</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-400 text-xs font-medium">Current:</span>
-                    <span className="text-teal-400 text-sm font-bold">{Math.round(currentAngle || 0)}°</span>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-
-            {/* Traffic Light Indicator (Bottom Left Corner) - Only during EXERCISE */}
-            {phase === SESSION_PHASES.EXERCISE && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.8 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="absolute bottom-6 left-6 z-30"
-              >
-                <div className="bg-black/80 backdrop-blur-md rounded-2xl p-4 border border-white/10">
-                  <div className="text-white text-xs font-semibold mb-3 text-center">FORM</div>
-                <div className="flex flex-col gap-3">
-                  {/* Green */}
-                  <div className="flex items-center gap-2">
-                    <motion.div
-                      animate={{
-                        backgroundColor: formQuality === 'excellent' ? '#10B981' : '#1F2937',
-                        boxShadow: formQuality === 'excellent' 
-                          ? '0 0 20px rgba(16, 185, 129, 0.8)' 
-                          : 'none'
-                      }}
-                      className="w-6 h-6 rounded-full border-2 border-white/30"
-                    />
-                    <span className={`text-xs font-medium ${formQuality === 'excellent' ? 'text-green-400' : 'text-gray-500'}`}>
-                      Excellent
-                    </span>
-                  </div>
-                  {/* Yellow */}
-                  <div className="flex items-center gap-2">
-                    <motion.div
-                      animate={{
-                        backgroundColor: formQuality === 'good' ? '#F59E0B' : '#1F2937',
-                        boxShadow: formQuality === 'good' 
-                          ? '0 0 20px rgba(245, 158, 11, 0.8)' 
-                          : 'none'
-                      }}
-                      className="w-6 h-6 rounded-full border-2 border-white/30"
-                    />
-                    <span className={`text-xs font-medium ${formQuality === 'good' ? 'text-amber-400' : 'text-gray-500'}`}>
-                      Good
-                    </span>
-                  </div>
-                  {/* Red */}
-                  <div className="flex items-center gap-2">
-                    <motion.div
-                      animate={{
-                        backgroundColor: formQuality === 'poor' ? '#EF4444' : '#1F2937',
-                        boxShadow: formQuality === 'poor' 
-                          ? '0 0 20px rgba(239, 68, 68, 0.8)' 
-                          : 'none'
-                      }}
-                      className="w-6 h-6 rounded-full border-2 border-white/30"
-                    />
-                    <span className={`text-xs font-medium ${formQuality === 'poor' ? 'text-red-400' : 'text-gray-500'}`}>
-                      Keep Going
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-            )}
-
-            {/* Angle Progress Bar (Bottom Center) - Only during EXERCISE */}
+            {/* ── BOTTOM CENTER: Angle Progress Bar (EXERCISE only) ── */}
             {phase === SESSION_PHASES.EXERCISE && currentAngle && baselineROM && exercise && (
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="absolute bottom-24 left-1/2 transform -translate-x-1/2 w-[90%] max-w-2xl z-20"
+                className="absolute bottom-4 left-[160px] right-[72px] z-20"
               >
-                <div className="bg-black/70 backdrop-blur-md rounded-2xl p-5 border border-white/10">
-                  <div className="flex justify-between text-sm mb-3">
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded-full bg-teal-400 animate-pulse"></div>
-                      <span className="text-teal-400 font-bold">{Math.round(currentAngle)}°</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded-full bg-gray-400"></div>
-                      <span className="text-gray-400 font-medium">Baseline: {baselineROM}°</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded-full bg-cyan-400"></div>
-                      <span className="text-cyan-400 font-bold">Target: {exercise.targetAngle}°</span>
-                    </div>
+                <div className="bg-black/75 backdrop-blur-md rounded-2xl px-4 py-3 border border-white/10 shadow-xl">
+                  <div className="flex justify-between text-[10px] mb-2">
+                    <span className="text-teal-400 font-bold">{Math.round(currentAngle)}° now</span>
+                    <span className="text-gray-400">Base: {baselineROM}°</span>
+                    <span className="text-cyan-400 font-bold">Target: {exercise.targetAngle}°</span>
                   </div>
-                  <div className="relative h-5 bg-gray-800 rounded-full overflow-hidden">
+                  <div className="relative h-3 bg-gray-800 rounded-full overflow-hidden">
                     {/* Baseline marker */}
                     <div
-                      className="absolute top-0 bottom-0 w-1 bg-white/70 z-10"
-                      style={{ left: `${(baselineROM / exercise.targetAngle) * 100}%` }}
+                      className="absolute top-0 bottom-0 w-0.5 bg-white/60 z-10"
+                      style={{ left: `${Math.min(100, (baselineROM / exercise.targetAngle) * 100)}%` }}
                     />
-                    {/* Current angle progress */}
+                    {/* Progress fill */}
                     <motion.div
-                      animate={{
-                        width: `${Math.min(100, (currentAngle / exercise.targetAngle) * 100)}%`
-                      }}
-                      className={`absolute h-full ${
+                      animate={{ width: `${Math.min(100, (currentAngle / exercise.targetAngle) * 100)}%` }}
+                      className={`absolute h-full rounded-full ${
                         currentAngle >= exercise.targetAngle
-                          ? 'bg-gradient-to-r from-green-500 to-green-600'
+                          ? 'bg-gradient-to-r from-green-500 to-green-400'
                           : currentAngle >= baselineROM
-                          ? 'bg-gradient-to-r from-teal-500 to-cyan-600'
-                          : 'bg-gradient-to-r from-red-500 to-orange-600'
+                          ? 'bg-gradient-to-r from-teal-500 to-cyan-400'
+                          : 'bg-gradient-to-r from-red-500 to-orange-400'
                       }`}
-                      transition={{ duration: 0.2 }}
+                      transition={{ duration: 0.15 }}
                     />
                   </div>
                 </div>
@@ -547,45 +616,45 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
         )}
       </AnimatePresence>
 
-      {/* Exit Button - Always visible during calibration and exercise */}
+      {/* ── TOP-RIGHT: Exit Button (always visible, above info panel) ── */}
       {cameraReady && isInitialized && (
         <motion.button
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          onClick={onEndSession}
-          className="absolute bottom-6 right-6 bg-red-500/90 backdrop-blur-md p-4 rounded-full hover:bg-red-600 transition-all z-30 group shadow-2xl border-2 border-red-400/30"
-          title="Exit Session"
+          initial={{ opacity: 0, scale: 0.8 }}
+          animate={{ opacity: 1, scale: 1 }}
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.95 }}
+          onClick={handleExitSession}
+          className="absolute top-4 right-4 bg-red-500/90 backdrop-blur-md p-3 rounded-full hover:bg-red-600 transition-all z-40 shadow-2xl border-2 border-red-400/30"
+          title="End Session"
         >
-          <X className="w-6 h-6 text-white" />
+          <X className="w-5 h-5 text-white" />
         </motion.button>
       )}
 
-      {/* Calibration Mode Indicator with Complete Button */}
+      {/* ── TOP-CENTER: Calibration Panel ── */}
       {phase === SESSION_PHASES.CALIBRATION && (
         <motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="absolute top-6 left-1/2 transform -translate-x-1/2 z-30"
+          className="absolute z-30 cursor-move touch-none"
+          style={{ ...getPanelStyle('calibration'), maxWidth: 'calc(100% - 280px)' }}
+          onPointerDown={(e) => startDrag(e, 'calibration')}
         >
-          <div className="bg-yellow-500/90 backdrop-blur-sm px-8 py-4 rounded-2xl shadow-2xl">
-            <p className="text-white font-bold text-xl text-center">
-              📏 Calibration ({calibrationReps.length}/3)
+          <div className="bg-yellow-500/90 backdrop-blur-sm px-6 py-3 rounded-2xl shadow-2xl">
+            <p className="text-white font-bold text-base text-center">
+              Calibration ({calibrationReps.length}/3)
             </p>
-            <p className="text-white/90 text-sm text-center mt-1">
-              Perform 3 test reps at maximum range
-            </p>
+            <p className="text-white/80 text-xs text-center">Perform 3 test reps at max range</p>
             {currentAngle && (
-              <p className="text-white font-mono text-4xl text-center mt-2">
-                {Math.round(currentAngle)}°
-              </p>
+              <p className="text-white font-mono text-3xl text-center mt-1 font-black">{Math.round(currentAngle)}°</p>
             )}
-            
+
             {/* Calibration rep indicators */}
-            <div className="flex gap-3 justify-center mt-4">
+            <div className="flex gap-2 justify-center mt-3">
               {[0, 1, 2].map(i => (
                 <div
                   key={i}
-                  className={`w-12 h-12 rounded-full border-2 flex items-center justify-center font-bold ${
+                  className={`w-10 h-10 rounded-full border-2 flex items-center justify-center font-bold text-sm ${
                     calibrationReps[i]
                       ? 'bg-green-500 border-green-600 text-white'
                       : 'bg-white/20 border-white/40 text-white/60'
@@ -595,64 +664,20 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
                 </div>
               ))}
             </div>
-            
+
             <motion.button
               onClick={handleCalibrationRep}
               disabled={!currentAngle || currentAngle <= 60}
-              className="mt-4 w-full bg-white text-yellow-600 px-6 py-3 rounded-xl font-bold text-lg shadow-lg hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-              whileHover={{ scale: currentAngle > 60 ? 1.05 : 1 }}
-              whileTap={{ scale: currentAngle > 60 ? 0.95 : 1 }}
+              className="mt-3 w-full bg-white text-yellow-600 px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              whileHover={{ scale: currentAngle > 60 ? 1.03 : 1 }}
+              whileTap={{ scale: currentAngle > 60 ? 0.97 : 1 }}
             >
-              <Check className="w-5 h-5" />
+              <Check className="w-4 h-4" />
               Record Rep {calibrationReps.length + 1}
             </motion.button>
             {(!currentAngle || currentAngle <= 60) && (
-              <p className="text-white/70 text-xs text-center mt-2">
-                Bend more to record calibration rep (min 60°)
-              </p>
+              <p className="text-white/70 text-[10px] text-center mt-1">Bend more to record (min 60°)</p>
             )}
-          </div>
-        </motion.div>
-      )}
-
-      {/* Press & Hold to End Button (Bottom Center) */}
-      {phase === SESSION_PHASES.EXERCISE && (
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-20"
-        >
-          <div className="relative">
-            <motion.button
-              onMouseDown={handlePressStart}
-              onMouseUp={handlePressEnd}
-              onMouseLeave={handlePressEnd}
-              onTouchStart={handlePressStart}
-              onTouchEnd={handlePressEnd}
-              className="relative bg-red-500/80 backdrop-blur-sm text-white px-8 py-4 rounded-full font-bold text-lg shadow-2xl hover:bg-red-600/80 transition-colors"
-              whileTap={{ scale: 0.95 }}
-            >
-              <span className="relative z-10">
-                {isHolding ? 'Hold to End...' : 'Press & Hold to End'}
-              </span>
-              
-              {/* Progress circle */}
-              {isHolding && (
-                <svg className="absolute inset-0 w-full h-full -rotate-90">
-                  <circle
-                    cx="50%"
-                    cy="50%"
-                    r="45%"
-                    fill="none"
-                    stroke="white"
-                    strokeWidth="4"
-                    strokeDasharray={`${2 * Math.PI * 45} ${2 * Math.PI * 45}`}
-                    strokeDashoffset={2 * Math.PI * 45 * (1 - holdProgress / 100)}
-                    className="transition-all duration-75"
-                  />
-                </svg>
-              )}
-            </motion.button>
           </div>
         </motion.div>
       )}

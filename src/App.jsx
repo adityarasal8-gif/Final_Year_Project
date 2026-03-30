@@ -14,7 +14,7 @@ import SessionSummary from './components/SessionSummary';
 import PhysioLogo from './components/PhysioLogo';
 import { auth } from './firebase';
 import { onAuthStateChanged } from 'firebase/auth';
-import { getUserProfile } from './utils/firestore';
+import { getUserProfile, saveSession } from './utils/firestore';
 
 /**
  * Main App Component
@@ -124,9 +124,35 @@ function App() {
     setCurrentView('exercise');
   };
 
-  const handleEndSession = (completedSessionData) => {
+  const handleEndSession = async (completedSessionData) => {
     setSessionData(completedSessionData);
     setCurrentView('summary');
+
+    // Save session to Firestore
+    if (user && !user.isDemo && completedSessionData) {
+      try {
+        const firestoreData = {
+          exerciseId: selectedExercise?.id || 'unknown',
+          exerciseName: selectedExercise?.name || 'Unknown Exercise',
+          legSide: selectedLeg,
+          totalReps: completedSessionData.totalReps || 0,
+          sets: completedSessionData.setsCompleted || completedSessionData.currentSet || 1,
+          maxAngle: completedSessionData.bestAngle || 0,
+          baselineROM: completedSessionData.baselineROM || 0,
+          improvement: completedSessionData.improvement || 0,
+          duration: completedSessionData.duration || 0,
+          therapistId: user.therapistId || null,
+        };
+        const result = await saveSession(user.uid, firestoreData);
+        if (result.success) {
+          console.log('✅ Session saved to Firestore:', result.sessionId);
+        } else {
+          console.error('❌ Failed to save session:', result.error);
+        }
+      } catch (err) {
+        console.error('❌ Error saving session:', err);
+      }
+    }
   };
 
   const handleNavigate = (view) => {
@@ -234,44 +260,13 @@ function App() {
    */
   return (
     <div className="min-h-screen bg-medical-background">
-      {/* Top bar with logout */}
-      <div className="bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center">
-        <div className="flex items-center gap-3">
-          <div className="bg-gradient-to-br from-teal-500 to-cyan-600 rounded-lg p-2">
-            <PhysioLogo className="w-6 h-6" color="white" />
-          </div>
-          <div>
-            <h1 className="text-lg font-bold text-medical-text-primary">Physio</h1>
-            <p className="text-xs text-medical-text-secondary">
-              {user.isDemo && '🚀 Demo Mode • '}
-              {user.name || user.email}
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-4">
-          {user.role === 'therapist' && (
-            <button
-              onClick={() => setCurrentView('therapist')}
-              className="text-sm text-medical-secondary hover:text-indigo-700 font-medium transition"
-            >
-              📊 Dashboard
-            </button>
-          )}
-          <button
-            onClick={handleLogout}
-            className="text-sm text-medical-error hover:text-red-600 font-medium transition"
-          >
-            Logout
-          </button>
-        </div>
-      </div>
-
-      {/* Main Dashboard */}
+      {/* Top bar is now rendered inside PatientDashboard */}
       <SessionProvider>
         <PatientDashboard
           user={user}
           onStartSession={handleStartSession}
           onNavigate={handleNavigate}
+          onLogout={handleLogout}
         />
       </SessionProvider>
     </div>

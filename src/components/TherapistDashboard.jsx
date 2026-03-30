@@ -105,6 +105,13 @@ const CheckIcon = ({ className }) => (
   </svg>
 );
 
+const SettingsIcon = ({ className }) => (
+  <svg className={className} fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
+    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+  </svg>
+);
+
 /**
  * Generate demo data for demo mode
  */
@@ -148,6 +155,7 @@ const TherapistDashboard = ({ user, onLogout }) => {
   const [timeRange, setTimeRange] = useState(30);  const [copied, setCopied] = useState(false);
   const [therapistCode, setTherapistCode] = useState(user?.therapistCode || '');
   const [loadingCode, setLoadingCode] = useState(true);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
 
   const handleCopyCode = () => {
     navigator.clipboard.writeText(therapistCode);
@@ -323,81 +331,84 @@ const TherapistDashboard = ({ user, onLogout }) => {
   if (patients.length === 0) {
     return (
       <div className="min-h-screen bg-medical-background">
-        {/* Top bar with logout - matching patient dashboard style */}
+      {/* Settings Modal */}
+      {showSettingsModal && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          onClick={() => setShowSettingsModal(false)}
+        >
+          <div
+            className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center mb-5">
+              <h2 className="text-xl font-bold text-medical-text-primary">Settings</h2>
+              <button onClick={() => setShowSettingsModal(false)} className="p-2 hover:bg-gray-100 rounded-lg transition">
+                <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+            <div className="mb-4 p-4 bg-gray-50 rounded-xl">
+              <p className="text-xs text-medical-text-secondary mb-1">Signed in as</p>
+              <p className="font-semibold text-medical-text-primary">{user?.name || user?.email}</p>
+              <p className="text-xs text-medical-text-secondary mt-0.5">Therapist account</p>
+            </div>
+            {/* Therapist Code inside settings */}
+            <div className="mb-4 p-4 bg-indigo-50 border border-indigo-100 rounded-xl">
+              <p className="text-xs text-medical-text-secondary mb-2">Your Therapist Code</p>
+              {loadingCode ? (
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 border-2 border-indigo-300 border-t-indigo-600 rounded-full animate-spin" />
+                  <span className="text-sm text-gray-400">Generating...</span>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-2xl font-bold font-mono tracking-widest text-indigo-700">{therapistCode || '—'}</span>
+                  {therapistCode && (
+                    <button
+                      onClick={handleCopyCode}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium rounded-lg transition-colors"
+                    >
+                      {copied ? <><CheckIcon className="w-3.5 h-3.5" />Copied!</> : <><CopyIcon className="w-3.5 h-3.5" />Copy</>}
+                    </button>
+                  )}
+                </div>
+              )}
+              <p className="text-xs text-medical-text-secondary mt-2">Share this code with patients so they can connect with you.</p>
+            </div>
+            <div className="border-t border-gray-100 pt-4">
+              <button
+                onClick={() => { setShowSettingsModal(false); onLogout?.(); }}
+                className="w-full py-2.5 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors font-medium"
+              >
+                Sign Out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Top bar – no-patients state */}
         <div className="bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center">
           <div className="flex items-center gap-3">
             <div className="bg-gradient-to-br from-teal-500 to-cyan-600 rounded-lg p-2">
               <PhysioLogo className="w-6 h-6" color="white" />
             </div>
             <div>
-              <h1 className="text-lg font-bold text-medical-text-primary">Physio - Therapist</h1>
+              <h1 className="text-lg font-bold text-medical-text-primary">Physio – Therapist</h1>
               <p className="text-xs text-medical-text-secondary">
                 {user?.isDemo && '🚀 Demo Mode • '}
                 {user?.name || user?.email || 'Therapist'}
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-4">
-            {onLogout && (
-              <button
-                onClick={onLogout}
-                className="text-sm text-medical-error hover:text-red-600 font-medium transition"
-              >
-                Logout
-              </button>
-            )}
-          </div>
+          <button
+            onClick={() => setShowSettingsModal(true)}
+            aria-label="Settings"
+            className="p-2 rounded-xl hover:bg-gray-100 text-medical-text-secondary hover:text-medical-primary transition-colors"
+          >
+            <SettingsIcon className="w-6 h-6" />
+          </button>
         </div>
         <div className="p-8">
-          {/* Therapist Code Card - Always visible */}
-          <motion.div
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="bg-gradient-to-br from-indigo-600 to-purple-700 rounded-2xl p-6 mb-6 shadow-lg max-w-2xl mx-auto"
-          >
-            <div className="flex flex-col items-center text-center gap-4">
-              <div>
-                <h3 className="text-white/80 text-sm font-medium mb-3">Share Your Therapist Code</h3>
-                <div className="flex items-center justify-center gap-3">
-                  <div className="bg-white/20 backdrop-blur-sm rounded-lg px-6 py-3 min-w-[240px]">
-                    {loadingCode ? (
-                      <div className="flex items-center justify-center gap-2">
-                        <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                        <p className="text-lg text-white/80">Generating...</p>
-                      </div>
-                    ) : therapistCode ? (
-                      <p className="text-4xl font-bold text-white font-mono tracking-widest">{therapistCode}</p>
-                    ) : (
-                      <p className="text-lg text-white/60">No code available</p>
-                    )}
-                  </div>
-                  {therapistCode && !loadingCode && (
-                    <button
-                      onClick={handleCopyCode}
-                      className="flex items-center gap-2 px-4 py-3 bg-white/20 hover:bg-white/30 backdrop-blur-sm text-white rounded-lg transition-all"
-                    >
-                      {copied ? (
-                        <>
-                          <CheckIcon className="w-5 h-5" />
-                          <span className="text-sm font-medium">Copied!</span>
-                        </>
-                      ) : (
-                        <>
-                          <CopyIcon className="w-5 h-5" />
-                          <span className="text-sm font-medium">Copy Code</span>
-                        </>
-                      )}
-                    </button>
-                  )}
-                </div>
-              </div>
-              <div className="text-white/90 text-sm max-w-md">
-                <p className="font-medium">📤 Patients need this code to connect with you</p>
-                <p className="text-white/70 mt-1">They can enter it during signup to link their account</p>
-                </div>
-              </div>
-            </motion.div>
-
           <div className="max-w-2xl mx-auto bg-white rounded-2xl p-12 text-center shadow-lg">
             <div className="w-20 h-20 bg-medical-primary/10 rounded-full flex items-center justify-center mx-auto mb-6">
               <UsersIcon className="w-10 h-10 text-medical-primary" />
@@ -419,82 +430,85 @@ const TherapistDashboard = ({ user, onLogout }) => {
 
   return (
     <div className="min-h-screen bg-medical-background">
-      {/* Top bar with logout - matching patient dashboard style */}
-      <div className="bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center">
+      {/* ── Therapist Settings Modal ── */}
+      {showSettingsModal && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          onClick={() => setShowSettingsModal(false)}
+        >
+          <div
+            className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center mb-5">
+              <h2 className="text-xl font-bold text-medical-text-primary">Settings</h2>
+              <button onClick={() => setShowSettingsModal(false)} className="p-2 hover:bg-gray-100 rounded-lg transition">
+                <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+            <div className="mb-4 p-4 bg-gray-50 rounded-xl">
+              <p className="text-xs text-medical-text-secondary mb-1">Signed in as</p>
+              <p className="font-semibold text-medical-text-primary">{user?.name || user?.email}</p>
+              <p className="text-xs text-medical-text-secondary mt-0.5">Therapist account</p>
+            </div>
+            {/* Therapist Code inside settings */}
+            <div className="mb-4 p-4 bg-indigo-50 border border-indigo-100 rounded-xl">
+              <p className="text-xs text-medical-text-secondary mb-2">Your Therapist Code</p>
+              {loadingCode ? (
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 border-2 border-indigo-300 border-t-indigo-600 rounded-full animate-spin" />
+                  <span className="text-sm text-gray-400">Generating...</span>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-2xl font-bold font-mono tracking-widest text-indigo-700">{therapistCode || '—'}</span>
+                  {therapistCode && (
+                    <button
+                      onClick={handleCopyCode}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium rounded-lg transition-colors"
+                    >
+                      {copied ? <><CheckIcon className="w-3.5 h-3.5" />Copied!</> : <><CopyIcon className="w-3.5 h-3.5" />Copy</>}
+                    </button>
+                  )}
+                </div>
+              )}
+              <p className="text-xs text-medical-text-secondary mt-2">Share this code with patients so they can connect with you.</p>
+            </div>
+            <div className="border-t border-gray-100 pt-4">
+              <button
+                onClick={() => { setShowSettingsModal(false); onLogout?.(); }}
+                className="w-full py-2.5 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors font-medium"
+              >
+                Sign Out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Top bar – main state */}
+      <div className="bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center sticky top-0 z-20 shadow-sm">
         <div className="flex items-center gap-3">
           <div className="bg-gradient-to-br from-teal-500 to-cyan-600 rounded-lg p-2">
             <PhysioLogo className="w-6 h-6" color="white" />
           </div>
           <div>
-            <h1 className="text-lg font-bold text-medical-text-primary">Physio - Therapist</h1>
+            <h1 className="text-lg font-bold text-medical-text-primary">Physio – Therapist</h1>
             <p className="text-xs text-medical-text-secondary">
               {user?.isDemo && '🚀 Demo Mode • '}
               {user?.name || user?.email || 'Therapist'}
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-4">
-          {onLogout && (
-            <button
-              onClick={onLogout}
-              className="text-sm text-medical-error hover:text-red-600 font-medium transition"
-            >
-              Logout
-            </button>
-          )}
-        </div>
+        <button
+          onClick={() => setShowSettingsModal(true)}
+          aria-label="Settings"
+          className="p-2 rounded-xl hover:bg-gray-100 text-medical-text-secondary hover:text-medical-primary transition-colors"
+        >
+          <SettingsIcon className="w-6 h-6" />
+        </button>
       </div>
 
       <div className="max-w-7xl mx-auto px-6 lg:px-12 py-8">
-        {/* Therapist Code Card - Always visible */}
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-gradient-to-br from-indigo-600 to-purple-700 rounded-2xl p-6 mb-6 shadow-lg"
-        >
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-            <div className="flex-1">
-              <h3 className="text-white/80 text-sm font-medium mb-2">Your Therapist Code</h3>
-              <div className="flex items-center gap-3">
-                <div className="bg-white/20 backdrop-blur-sm rounded-lg px-4 py-2 min-w-[200px]">
-                  {loadingCode ? (
-                    <div className="flex items-center justify-center gap-2">
-                      <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                      <p className="text-sm text-white/80">Generating...</p>
-                    </div>
-                  ) : therapistCode ? (
-                    <p className="text-3xl font-bold text-white font-mono tracking-widest">{therapistCode}</p>
-                  ) : (
-                    <p className="text-sm text-white/60">No code available</p>
-                  )}
-                </div>
-                {therapistCode && !loadingCode && (
-                  <button
-                    onClick={handleCopyCode}
-                    className="flex items-center gap-2 px-4 py-2 bg-white/20 hover:bg-white/30 backdrop-blur-sm text-white rounded-lg transition-all"
-                  >
-                    {copied ? (
-                      <>
-                        <CheckIcon className="w-4 h-4" />
-                        <span className="text-sm font-medium">Copied!</span>
-                      </>
-                    ) : (
-                      <>
-                        <CopyIcon className="w-4 h-4" />
-                        <span className="text-sm font-medium">Copy</span>
-                      </>
-                    )}
-                  </button>
-                )}
-              </div>
-            </div>
-            <div className="text-white/90 text-sm max-w-md">
-              <p className="mb-1">📤 <strong>Share this code</strong> with patients</p>
-              <p className="text-white/70">Patients can use this code during signup to connect with you.</p>
-            </div>
-          </div>
-        </motion.div>
-
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           {/* Sidebar - Patient List */}
           <div className="lg:col-span-1 space-y-6">

@@ -70,6 +70,9 @@ export const SessionProvider = ({ children }) => {
   const baselineROMRef = useRef(baselineROM);
   const targetROMRef = useRef(targetROM);
   const isInFlexionRef = useRef(isInFlexion);
+  const legSideRef = useRef(legSide);
+  const flexionStartTimeRef = useRef(null);
+  const lastRepTimeRef = useRef(0);
 
   // Keep refs in sync
   useEffect(() => {
@@ -91,6 +94,10 @@ export const SessionProvider = ({ children }) => {
   useEffect(() => {
     isInFlexionRef.current = isInFlexion;
   }, [isInFlexion]);
+
+  useEffect(() => {
+    legSideRef.current = legSide;
+  }, [legSide]);
 
   /**
    * Calculate improvement based on current angle
@@ -160,22 +167,66 @@ export const SessionProvider = ({ children }) => {
    * Detect and count a rep
    * Rep logic: Flexion (angle decreases below threshold) -> Extension (angle returns above threshold)
    */
-  const detectRep = useCallback((angle) => {
-    if (!baselineROMRef.current) return;
+  const detectRep = useCallback((angle, repConfig = null) => {
+    if (!baselineROMRef.current || typeof angle !== 'number') return;
 
-    const flexionThreshold = baselineROMRef.current + 10; // Angle must exceed baseline by 10°
-    const extensionThreshold = 60; // Return to near-straight position
+    const now = Date.now();
+
+    const configFlexThreshold = repConfig?.flexionThreshold;
+    const configExtensionThreshold = repConfig?.extensionThreshold;
+    const configMinHold = repConfig?.minHoldTime;
+
+    // Hysteresis thresholds tuned for knee rehab movement:
+    // 1) Enter flexion when clearly above baseline.
+    // 2) Count rep only after returning well below baseline.
+    const flexionThreshold =
+      typeof configFlexThreshold === 'number'
+        ? configFlexThreshold
+        : Math.max(baselineROMRef.current + 8, targetROMRef.current - 20);
+
+    const extensionThreshold =
+      typeof configExtensionThreshold === 'number'
+        ? configExtensionThreshold
+        : Math.max(45, baselineROMRef.current - 30);
+
+    // Direction-aware rep detection:
+    // descending mode: high -> low angle (e.g. knee flexion)
+    // ascending mode: low -> high angle (e.g. knee extension)
+    const isAscending = extensionThreshold > flexionThreshold;
+
+    // Debounce very fast repeated counts from noisy oscillations.
+    const REP_COOLDOWN_MS = 550;
+    const MIN_FLEXION_HOLD_MS = typeof configMinHold === 'number' ? configMinHold : 120;
 
     // Transitioning into flexion
-    if (!isInFlexionRef.current && angle >= flexionThreshold) {
+    const enteredPrimaryPhase = isAscending
+      ? angle <= flexionThreshold
+      : angle >= flexionThreshold;
+
+    if (!isInFlexionRef.current && enteredPrimaryPhase) {
       isInFlexionRef.current = true;
       setIsInFlexion(true);
+      flexionStartTimeRef.current = now;
     }
 
     // Completing a rep (returning from flexion)
-    if (isInFlexionRef.current && angle <= extensionThreshold) {
+    const reachedCompletion = isAscending
+      ? angle >= extensionThreshold
+      : angle <= extensionThreshold;
+
+    if (isInFlexionRef.current && reachedCompletion) {
+      const flexionStartedAt = flexionStartTimeRef.current || now;
+      const heldLongEnough = now - flexionStartedAt >= MIN_FLEXION_HOLD_MS;
+      const cooldownPassed = now - lastRepTimeRef.current >= REP_COOLDOWN_MS;
+
+      if (!heldLongEnough || !cooldownPassed) {
+        return;
+      }
+
       isInFlexionRef.current = false;
       setIsInFlexion(false);
+      flexionStartTimeRef.current = null;
+      lastRepTimeRef.current = now;
       
       // Count the rep
       setReps(prev => {
@@ -272,6 +323,9 @@ export const SessionProvider = ({ children }) => {
     setFeedbackState(FEEDBACK_STATES.NEUTRAL);
     setCurrentSet(1);
     setSetsCompleted(0);
+    flexionStartTimeRef.current = null;
+    lastRepTimeRef.current = 0;
+    isInFlexionRef.current = false;
     console.log('🏁 Session started');
   }, []);
 
@@ -318,6 +372,9 @@ export const SessionProvider = ({ children }) => {
     setSessionEndTime(null);
     setCurrentSet(1);
     setSetsCompleted(0);
+    flexionStartTimeRef.current = null;
+    lastRepTimeRef.current = 0;
+    isInFlexionRef.current = false;
   }, []);
 
   /**
@@ -330,6 +387,9 @@ export const SessionProvider = ({ children }) => {
     setMaxAngleThisSession(null);
     setCurrentAngle(null);
     setIsInFlexion(false);
+    flexionStartTimeRef.current = null;
+    lastRepTimeRef.current = 0;
+    isInFlexionRef.current = false;
     console.log(`📊 Moving to set ${currentSet + 1}`);
   }, [currentSet]);
 

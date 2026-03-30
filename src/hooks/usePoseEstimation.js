@@ -8,7 +8,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { PoseLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
-import { calculateKneeAngle, smoothAngle } from '../utils/geometry';
+import { calculateKneeAngle, smoothAngle, validateLegLandmarks, smoothLandmarks } from '../utils/geometry';
 import { areLowerBodyLandmarksVisible } from '../utils/drawing';
 
 /**
@@ -55,6 +55,11 @@ export const usePoseEstimation = (options = {}) => {
   const leftAngleSmoothRef = useRef(null);
   const rightAngleSmoothRef = useRef(null);
 
+  // Temporal landmark position smoother (reduces skeleton jitter)
+  const smoothedLandmarksRef = useRef(null);
+  const lastValidPoseRef = useRef(null);
+  const lastValidTimestampRef = useRef(0);
+
   // State
   const [isInitialized, setIsInitialized] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -86,9 +91,9 @@ export const usePoseEstimation = (options = {}) => {
         },
         runningMode: 'VIDEO', // VIDEO mode for high FPS (detector-tracker logic)
         numPoses: 1, // Track single person for better performance
-        minPoseDetectionConfidence: 0.3, // Lowered to work without face
-        minPosePresenceConfidence: 0.3, // Lowered to work without face
-        minTrackingConfidence: 0.3, // Lowered for better leg-only tracking
+        minPoseDetectionConfidence: minDetectionConfidence,
+        minPosePresenceConfidence: minPresenceConfidence,
+        minTrackingConfidence: 0.5,
         outputSegmentationMasks: false // Disable for better performance
       });
 
@@ -102,7 +107,7 @@ export const usePoseEstimation = (options = {}) => {
       setError(err.message);
       setIsLoading(false);
     }
-  }, []);
+  }, [minDetectionConfidence, minPresenceConfidence]);
 
   /**
    * Process a video frame and extract pose landmarks
@@ -139,58 +144,98 @@ export const usePoseEstimation = (options = {}) => {
 
       // Check if pose detected
       if (!result || !result.landmarks || result.landmarks.length === 0) {
+        // Keep showing last valid pose briefly to prevent hard flicker.
+        const ageMs = timestamp - lastValidTimestampRef.current;
+        if (lastValidPoseRef.current && ageMs < 160) {
+          isProcessingRef.current = false;
+          return lastValidPoseRef.current;
+        }
         isProcessingRef.current = false;
         return null;
       }
 
       const poseLandmarks = result.landmarks[0]; // First (and only) person
-      setLandmarks(poseLandmarks);
 
-      // CRITICAL: Check if LOWER BODY is visible (not upper body)
-      // Very lenient threshold (0.3) to work reliably with only legs visible
+      // --- Landmark position smoothing ---
+      // Apply EMA to x/y/z positions to eliminate per-frame jitter from the
+      // skeleton overlay.  Visibility is kept from the raw detection so that
+      // confidence-based gating still reflects the live signal.
+      const smoothed = smoothLandmarks(
+        poseLandmarks,
+        smoothedLandmarksRef.current,
+        0.55 // Slightly faster response while still filtering jitter
+      );
+      smoothedLandmarksRef.current = smoothed;
+
+      // Expose the smoothed positions to React state (used by canvas drawing)
+      setLandmarks(smoothed);
+
+      // Lower-body visibility gate (use raw landmarks for confidence check)
       if (!areLowerBodyLandmarksVisible(poseLandmarks, 0.3)) {
+        const ageMs = timestamp - lastValidTimestampRef.current;
+        if (lastValidPoseRef.current && ageMs < 160) {
+          isProcessingRef.current = false;
+          return lastValidPoseRef.current;
+        }
         isProcessingRef.current = false;
         return null;
       }
 
-      // Extract only lower body landmarks (23-32)
-      const lowerBody = poseLandmarks.slice(23, 33);
+      // Extract only lower body landmarks (23-32) from the smoothed set
+      const lowerBody = smoothed.slice(23, 33);
       setLowerBodyLandmarks(lowerBody);
 
-      // Calculate angles for both legs
-      const leftHip = poseLandmarks[POSE_LANDMARKS.LEFT_HIP];
-      const leftKnee = poseLandmarks[POSE_LANDMARKS.LEFT_KNEE];
-      const leftAnkle = poseLandmarks[POSE_LANDMARKS.LEFT_ANKLE];
+      // --- Angle calculation on smoothed positions ---
+      // Raw visibility is used for the per-landmark confidence gate;
+      // smoothed x/y positions are used for the actual angle maths.
+      const leftHip   = { ...smoothed[POSE_LANDMARKS.LEFT_HIP],   visibility: poseLandmarks[POSE_LANDMARKS.LEFT_HIP].visibility };
+      const leftKnee  = { ...smoothed[POSE_LANDMARKS.LEFT_KNEE],  visibility: poseLandmarks[POSE_LANDMARKS.LEFT_KNEE].visibility };
+      const leftAnkle = { ...smoothed[POSE_LANDMARKS.LEFT_ANKLE], visibility: poseLandmarks[POSE_LANDMARKS.LEFT_ANKLE].visibility };
 
-      const rightHip = poseLandmarks[POSE_LANDMARKS.RIGHT_HIP];
-      const rightKnee = poseLandmarks[POSE_LANDMARKS.RIGHT_KNEE];
-      const rightAnkle = poseLandmarks[POSE_LANDMARKS.RIGHT_ANKLE];
+      const rightHip   = { ...smoothed[POSE_LANDMARKS.RIGHT_HIP],   visibility: poseLandmarks[POSE_LANDMARKS.RIGHT_HIP].visibility };
+      const rightKnee  = { ...smoothed[POSE_LANDMARKS.RIGHT_KNEE],  visibility: poseLandmarks[POSE_LANDMARKS.RIGHT_KNEE].visibility };
+      const rightAnkle = { ...smoothed[POSE_LANDMARKS.RIGHT_ANKLE], visibility: poseLandmarks[POSE_LANDMARKS.RIGHT_ANKLE].visibility };
 
-      // Calculate left knee angle - VERY LOW VISIBILITY THRESHOLD for leg-only detection
+      // Anatomical validation — reject detections where the skeleton geometry
+      // violates physical constraints (hip-above-knee-above-ankle rule).
+      // This is the primary guard against MediaPipe placing landmarks wrongly
+      // when only legs are in frame.
+      const leftLegValid  = validateLegLandmarks(leftHip, leftKnee, leftAnkle);
+      const rightLegValid = validateLegLandmarks(rightHip, rightKnee, rightAnkle);
+
+      // Calculate left knee angle
       let leftKneeAngle = null;
-      if (leftHip.visibility > 0.3 && leftKnee.visibility > 0.3 && leftAnkle.visibility > 0.3) {
+      if (
+        leftLegValid &&
+        leftHip.visibility  > 0.35 &&
+        leftKnee.visibility > 0.35 &&
+        leftAnkle.visibility > 0.35
+      ) {
         leftKneeAngle = calculateKneeAngle(leftHip, leftKnee, leftAnkle);
-        if (leftKneeAngle && enableSmoothing) {
-          // Increased smoothing factor (0.4 instead of 0.3) to reduce jitter
-          leftKneeAngle = smoothAngle(leftKneeAngle, leftAngleSmoothRef.current, 0.4);
+        if (leftKneeAngle !== null && enableSmoothing) {
+          leftKneeAngle = smoothAngle(leftKneeAngle, leftAngleSmoothRef.current, 0.35);
           leftAngleSmoothRef.current = leftKneeAngle;
         }
-        if (leftKneeAngle) {
+        if (leftKneeAngle !== null) {
           leftKneeAngle = Math.round(leftKneeAngle * 10) / 10;
           setLeftAngle(leftKneeAngle);
         }
       }
 
-      // Calculate right knee angle - VERY LOW VISIBILITY THRESHOLD for leg-only detection
+      // Calculate right knee angle
       let rightKneeAngle = null;
-      if (rightHip.visibility > 0.3 && rightKnee.visibility > 0.3 && rightAnkle.visibility > 0.3) {
+      if (
+        rightLegValid &&
+        rightHip.visibility  > 0.35 &&
+        rightKnee.visibility > 0.35 &&
+        rightAnkle.visibility > 0.35
+      ) {
         rightKneeAngle = calculateKneeAngle(rightHip, rightKnee, rightAnkle);
-        if (rightKneeAngle && enableSmoothing) {
-          // Increased smoothing factor (0.4 instead of 0.3) to reduce jitter
-          rightKneeAngle = smoothAngle(rightKneeAngle, rightAngleSmoothRef.current, 0.4);
+        if (rightKneeAngle !== null && enableSmoothing) {
+          rightKneeAngle = smoothAngle(rightKneeAngle, rightAngleSmoothRef.current, 0.35);
           rightAngleSmoothRef.current = rightKneeAngle;
         }
-        if (rightKneeAngle) {
+        if (rightKneeAngle !== null) {
           rightKneeAngle = Math.round(rightKneeAngle * 10) / 10;
           setRightAngle(rightKneeAngle);
         }
@@ -199,7 +244,7 @@ export const usePoseEstimation = (options = {}) => {
       // Trigger callbacks
       if (onPoseDetected) {
         onPoseDetected({
-          landmarks: poseLandmarks,
+          landmarks: smoothed,
           lowerBodyLandmarks: lowerBody,
           worldLandmarks: result.worldLandmarks?.[0]
         });
@@ -219,10 +264,10 @@ export const usePoseEstimation = (options = {}) => {
 
       isProcessingRef.current = false;
 
-      return {
+      const output = {
         leftAngle: leftKneeAngle,
         rightAngle: rightKneeAngle,
-        landmarks: poseLandmarks,
+        landmarks: smoothed,         // smoothed positions for the canvas overlay
         lowerBodyLandmarks: lowerBody,
         leftHip,
         leftKnee,
@@ -231,6 +276,13 @@ export const usePoseEstimation = (options = {}) => {
         rightKnee,
         rightAnkle
       };
+
+      if (leftKneeAngle !== null || rightKneeAngle !== null) {
+        lastValidPoseRef.current = output;
+        lastValidTimestampRef.current = timestamp;
+      }
+
+      return output;
 
     } catch (err) {
       console.error('❌ Frame processing error:', err);
@@ -245,6 +297,9 @@ export const usePoseEstimation = (options = {}) => {
   const resetSmoothing = useCallback(() => {
     leftAngleSmoothRef.current = null;
     rightAngleSmoothRef.current = null;
+    smoothedLandmarksRef.current = null; // also reset position history
+    lastValidPoseRef.current = null;
+    lastValidTimestampRef.current = 0;
   }, []);
 
   /**
