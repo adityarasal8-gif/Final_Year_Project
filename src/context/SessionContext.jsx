@@ -71,6 +71,7 @@ export const SessionProvider = ({ children }) => {
   const targetROMRef = useRef(targetROM);
   const isInFlexionRef = useRef(isInFlexion);
   const legSideRef = useRef(legSide);
+  const currentSetRef = useRef(currentSet);
   const flexionStartTimeRef = useRef(null);
   const lastRepTimeRef = useRef(0);
 
@@ -98,6 +99,10 @@ export const SessionProvider = ({ children }) => {
   useEffect(() => {
     legSideRef.current = legSide;
   }, [legSide]);
+
+  useEffect(() => {
+    currentSetRef.current = currentSet;
+  }, [currentSet]);
 
   /**
    * Calculate improvement based on current angle
@@ -165,98 +170,86 @@ export const SessionProvider = ({ children }) => {
 
   /**
    * Detect and count a rep
-   * Rep logic: Flexion (angle decreases below threshold) -> Extension (angle returns above threshold)
+   * Movement pattern is exercise-configurable and posture-gated.
    */
-  const detectRep = useCallback((angle, repConfig = null) => {
+  const detectRep = useCallback((angle, repConfig = null, postureOk = true) => {
     if (!baselineROMRef.current || typeof angle !== 'number') return;
 
     const now = Date.now();
 
-    const configFlexThreshold = repConfig?.flexionThreshold;
-    const configExtensionThreshold = repConfig?.extensionThreshold;
-    const configMinHold = repConfig?.minHoldTime;
+    const movementPattern = repConfig?.movementPattern || 'increase_then_decrease';
+    const peakThreshold = typeof repConfig?.peakThreshold === 'number'
+      ? repConfig.peakThreshold
+      : Math.max((baselineROMRef.current || 0) + 8, (targetROMRef.current || 0) - 15);
+    const resetThreshold = typeof repConfig?.resetThreshold === 'number'
+      ? repConfig.resetThreshold
+      : Math.max(10, (baselineROMRef.current || 0) - 8);
+    const minPeakHoldTime = typeof repConfig?.minPeakHoldTime === 'number' ? repConfig.minPeakHoldTime : 180;
+    const minRepInterval = typeof repConfig?.minRepInterval === 'number' ? repConfig.minRepInterval : 600;
 
-    // Hysteresis thresholds tuned for knee rehab movement:
-    // 1) Enter flexion when clearly above baseline.
-    // 2) Count rep only after returning well below baseline.
-    const flexionThreshold =
-      typeof configFlexThreshold === 'number'
-        ? configFlexThreshold
-        : Math.max(baselineROMRef.current + 8, targetROMRef.current - 20);
+    const isIncreaseThenDecrease = movementPattern === 'increase_then_decrease';
 
-    const extensionThreshold =
-      typeof configExtensionThreshold === 'number'
-        ? configExtensionThreshold
-        : Math.max(45, baselineROMRef.current - 30);
+    const enteredPeak = isIncreaseThenDecrease
+      ? angle >= peakThreshold
+      : angle <= peakThreshold;
 
-    // Direction-aware rep detection:
-    // descending mode: high -> low angle (e.g. knee flexion)
-    // ascending mode: low -> high angle (e.g. knee extension)
-    const isAscending = extensionThreshold > flexionThreshold;
-
-    // Debounce very fast repeated counts from noisy oscillations.
-    const REP_COOLDOWN_MS = 550;
-    const MIN_FLEXION_HOLD_MS = typeof configMinHold === 'number' ? configMinHold : 120;
-
-    // Transitioning into flexion
-    const enteredPrimaryPhase = isAscending
-      ? angle <= flexionThreshold
-      : angle >= flexionThreshold;
-
-    if (!isInFlexionRef.current && enteredPrimaryPhase) {
+    if (!isInFlexionRef.current && enteredPeak && postureOk) {
       isInFlexionRef.current = true;
       setIsInFlexion(true);
       flexionStartTimeRef.current = now;
+      return;
     }
 
-    // Completing a rep (returning from flexion)
-    const reachedCompletion = isAscending
-      ? angle >= extensionThreshold
-      : angle <= extensionThreshold;
+    if (!isInFlexionRef.current) {
+      return;
+    }
 
-    if (isInFlexionRef.current && reachedCompletion) {
-      const flexionStartedAt = flexionStartTimeRef.current || now;
-      const heldLongEnough = now - flexionStartedAt >= MIN_FLEXION_HOLD_MS;
-      const cooldownPassed = now - lastRepTimeRef.current >= REP_COOLDOWN_MS;
+    const reachedReset = isIncreaseThenDecrease
+      ? angle <= resetThreshold
+      : angle >= resetThreshold;
 
-      if (!heldLongEnough || !cooldownPassed) {
-        return;
+    if (!reachedReset) {
+      return;
+    }
+
+    const phaseStartedAt = flexionStartTimeRef.current || now;
+    const heldLongEnough = now - phaseStartedAt >= minPeakHoldTime;
+    const cooldownPassed = now - lastRepTimeRef.current >= minRepInterval;
+
+    isInFlexionRef.current = false;
+    setIsInFlexion(false);
+    flexionStartTimeRef.current = null;
+
+    if (!heldLongEnough || !cooldownPassed || !postureOk) {
+      return;
+    }
+
+    lastRepTimeRef.current = now;
+
+    setReps(prev => {
+      const newRepCount = prev + 1;
+
+      const repData = {
+        repNumber: newRepCount,
+        maxAngle: maxAngleRef.current || angle,
+        timestamp: new Date().toISOString(),
+        improvement: calculateImprovement(maxAngleRef.current || angle, baselineROMRef.current, targetROMRef.current),
+        set: currentSetRef.current
+      };
+
+      setRepHistory(prevHistory => [...prevHistory, repData]);
+
+      if (audioEnabledRef.current) {
+        playSuccessSound();
       }
 
-      isInFlexionRef.current = false;
-      setIsInFlexion(false);
-      flexionStartTimeRef.current = null;
-      lastRepTimeRef.current = now;
-      
-      // Count the rep
-      setReps(prev => {
-        const newRepCount = prev + 1;
+      console.log(`✅ Rep ${newRepCount} completed: ${Math.round(maxAngleRef.current || angle)}° (Set ${currentSetRef.current})`);
 
-        // Record the rep with detailed data
-        const repData = {
-          repNumber: newRepCount,
-          maxAngle: maxAngleRef.current || angle,
-          timestamp: new Date().toISOString(),
-          improvement: calculateImprovement(maxAngleRef.current || angle, baselineROMRef.current, targetROMRef.current),
-          set: currentSet
-        };
+      return newRepCount;
+    });
 
-        setRepHistory(prevHistory => [...prevHistory, repData]);
-
-        // Play success sound
-        if (audioEnabledRef.current) {
-          playSuccessSound();
-        }
-
-        console.log(`✅ Rep ${newRepCount} completed: ${maxAngleRef.current}° (Set ${currentSet})`);
-        
-        return newRepCount;
-      });
-
-      // Reset session max for next rep
-      setMaxAngleThisSession(null);
-      maxAngleRef.current = null;
-    }
+    setMaxAngleThisSession(null);
+    maxAngleRef.current = null;
   }, []);
 
   /**

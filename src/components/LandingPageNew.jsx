@@ -353,7 +353,7 @@ const LandingPage = ({ onAuthSuccess }) => {
 
   const handleGetStarted = (type) => {
     setUserType(type);
-    setShowAuth('signup');
+    setShowAuth('login');
   };
 
   const handleSignIn = (type) => {
@@ -497,7 +497,7 @@ const LandingPage = ({ onAuthSuccess }) => {
                   <div className="absolute inset-0 bg-gradient-to-r from-cyan-200/0 via-cyan-200/50 to-cyan-200/0 transform translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700" />
                   <span className="relative z-10 flex items-center justify-center gap-3">
                     <User className="w-5 h-5" />
-                    Sign Up as Patient
+                    Sign In as Patient
                     <motion.span
                       animate={{ x: [0, 5, 0] }}
                       transition={{ duration: 1.5, repeat: Infinity }}
@@ -512,7 +512,7 @@ const LandingPage = ({ onAuthSuccess }) => {
                   className="group px-10 py-5 bg-white/10 backdrop-blur-xl text-white border-2 border-white/40 rounded-2xl font-bold text-lg hover:bg-white hover:text-teal-600 hover:border-white transition-all duration-300 flex items-center justify-center gap-3 shadow-lg"
                 >
                   <Stethoscope className="w-5 h-5" />
-                  <span>Sign Up as Therapist</span>
+                  <span>Sign In as Therapist</span>
                 </button>
               </motion.div>
 
@@ -1488,7 +1488,7 @@ const LandingPage = ({ onAuthSuccess }) => {
                 <div className="absolute inset-0 bg-gradient-to-r from-teal-600 to-cyan-600 opacity-0 group-hover:opacity-10 transition-opacity"></div>
                 <span className="flex items-center justify-center gap-3 relative z-10">
                   <User className="w-6 h-6 group-hover:scale-110 transition-transform" />
-                  Get Started as Patient
+                  Sign In as Patient
                 </span>
               </button>
               <button
@@ -1496,7 +1496,7 @@ const LandingPage = ({ onAuthSuccess }) => {
                 className="px-12 py-6 bg-white/10 backdrop-blur-md text-white border-2 border-white/30 rounded-2xl font-bold text-xl hover:bg-white/20 hover:border-white/50 transition-all duration-300 flex items-center justify-center gap-3 hover:scale-105"
               >
                 <Stethoscope className="w-6 h-6" />
-                Get Started as Therapist
+                Sign In as Therapist
               </button>
               <button
                 onClick={() => handleSignIn('patient')}

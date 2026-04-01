@@ -12,15 +12,128 @@ import {
   setDoc,
   addDoc,
   updateDoc,
-  deleteDoc,
   query,
   where,
-  orderBy,
   limit,
-  Timestamp,
   serverTimestamp
 } from 'firebase/firestore';
 import { db } from '../firebase';
+
+const SESSION_CACHE_KEY = 'physio_session_cache_v1';
+const MAX_QUERY_LIMIT = 100;
+
+const clampQueryLimit = (value, fallback = MAX_QUERY_LIMIT) => {
+  const candidate = Number.isFinite(value) ? Math.floor(value) : fallback;
+  return Math.max(1, Math.min(MAX_QUERY_LIMIT, candidate));
+};
+
+const canUseLocalStorage = () => typeof window !== 'undefined' && !!window.localStorage;
+
+const toDate = (value) => {
+  if (!value) return null;
+  if (value?.toDate) return value.toDate();
+  if (typeof value?.seconds === 'number') return new Date(value.seconds * 1000);
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const dateToMs = (value) => toDate(value)?.getTime() || 0;
+
+const sortSessions = (sessions, order = 'desc') => {
+  const factor = order === 'asc' ? 1 : -1;
+  return [...sessions].sort((a, b) => factor * (dateToMs(a.createdAt) - dateToMs(b.createdAt)));
+};
+
+const readSessionCache = () => {
+  if (!canUseLocalStorage()) return {};
+
+  try {
+    const raw = window.localStorage.getItem(SESSION_CACHE_KEY);
+    if (!raw) return {};
+
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (error) {
+    console.warn('Failed to read local session cache:', error);
+    return {};
+  }
+};
+
+const writeSessionCache = (cache) => {
+  if (!canUseLocalStorage()) return;
+
+  try {
+    window.localStorage.setItem(SESSION_CACHE_KEY, JSON.stringify(cache));
+  } catch (error) {
+    console.warn('Failed to write local session cache:', error);
+  }
+};
+
+const normalizeCachedSession = (userId, sessionData, forcedId = null) => {
+  const createdAtDate = toDate(sessionData?.createdAt) || new Date();
+  return {
+    ...sessionData,
+    id: forcedId || sessionData?.id || `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    userId,
+    createdAt: createdAtDate.toISOString()
+  };
+};
+
+const cacheSessionLocal = (userId, sessionData, forcedId = null) => {
+  if (!userId) return null;
+
+  const cache = readSessionCache();
+  const normalized = normalizeCachedSession(userId, sessionData, forcedId);
+  const existing = Array.isArray(cache[userId]) ? cache[userId] : [];
+
+  cache[userId] = [normalized, ...existing.filter((s) => s?.id !== normalized.id)].slice(0, 500);
+  writeSessionCache(cache);
+  return normalized.id;
+};
+
+const getLocalSessions = (userId) => {
+  if (!userId) return [];
+  const cache = readSessionCache();
+  return Array.isArray(cache[userId]) ? cache[userId] : [];
+};
+
+const mergeSessionsById = (primary, secondary) => {
+  const merged = new Map();
+
+  [...primary, ...secondary].forEach((session) => {
+    if (!session?.id || merged.has(session.id)) return;
+    merged.set(session.id, session);
+  });
+
+  return Array.from(merged.values());
+};
+
+const filterByDays = (sessions, days) => {
+  if (!days || days <= 0) return sessions;
+  const cutoff = Date.now() - (days * 24 * 60 * 60 * 1000);
+  return sessions.filter((session) => dateToMs(session.createdAt) >= cutoff);
+};
+
+const fetchSessionsByOwnerField = async (ownerField, ownerId, limitCount = MAX_QUERY_LIMIT) => {
+  const q = query(
+    collection(db, 'sessions'),
+    where(ownerField, '==', ownerId),
+    limit(clampQueryLimit(limitCount))
+  );
+
+  const querySnapshot = await getDocs(q);
+  const sessions = [];
+
+  querySnapshot.forEach((doc) => {
+    sessions.push({
+      id: doc.id,
+      ...doc.data()
+    });
+  });
+
+  return sessions;
+};
 
 // Guard to check if Firebase is configured
 const isFirebaseConfigured = () => {
@@ -87,7 +200,10 @@ export const getUserProfile = async (uid) => {
  * @param {Object} sessionData - Session data
  */
 export const saveSession = async (userId, sessionData) => {
-  if (!isFirebaseConfigured()) return { success: false, error: 'Firebase not configured' };
+  if (!isFirebaseConfigured()) {
+    const localId = cacheSessionLocal(userId, sessionData);
+    return { success: true, sessionId: localId, source: 'local' };
+  }
   
   try {
     const sessionRef = await addDoc(collection(db, 'sessions'), {
@@ -95,11 +211,14 @@ export const saveSession = async (userId, sessionData) => {
       ...sessionData,
       createdAt: serverTimestamp()
     });
+
+    cacheSessionLocal(userId, sessionData, sessionRef.id);
     
     return { success: true, sessionId: sessionRef.id };
   } catch (error) {
     console.error('Error saving session:', error);
-    return { success: false, error };
+    const localId = cacheSessionLocal(userId, sessionData);
+    return { success: true, sessionId: localId, source: 'local', warning: error };
   }
 };
 
@@ -109,30 +228,31 @@ export const saveSession = async (userId, sessionData) => {
  * @param {number} limitCount - Number of sessions to fetch
  */
 export const getUserSessions = async (userId, limitCount = 30) => {
-  if (!isFirebaseConfigured()) return { success: false, error: 'Firebase not configured' };
+  const effectiveLimit = clampQueryLimit(limitCount, 30);
+  const localSessions = getLocalSessions(userId);
+  const localFallback = () => ({
+    success: true,
+    source: 'local',
+    data: sortSessions(localSessions, 'desc').slice(0, effectiveLimit)
+  });
+
+  if (!isFirebaseConfigured()) return localFallback();
   
   try {
-    const q = query(
-      collection(db, 'sessions'),
-      where('userId', '==', userId),
-      orderBy('createdAt', 'desc'),
-      limit(limitCount)
+    const [userIdSessions, legacyUidSessions, legacyPatientIdSessions] = await Promise.all([
+      fetchSessionsByOwnerField('userId', userId, effectiveLimit),
+      fetchSessionsByOwnerField('uid', userId, effectiveLimit),
+      fetchSessionsByOwnerField('patientId', userId, effectiveLimit)
+    ]);
+
+    const merged = mergeSessionsById(
+      [...userIdSessions, ...legacyUidSessions, ...legacyPatientIdSessions],
+      localSessions
     );
-    
-    const querySnapshot = await getDocs(q);
-    const sessions = [];
-    
-    querySnapshot.forEach((doc) => {
-      sessions.push({
-        id: doc.id,
-        ...doc.data()
-      });
-    });
-    
-    return { success: true, data: sessions };
+    return { success: true, data: sortSessions(merged, 'desc').slice(0, effectiveLimit) };
   } catch (error) {
     console.error('Error getting sessions:', error);
-    return { success: false, error };
+    return localFallback();
   }
 };
 
@@ -358,13 +478,25 @@ export const getTherapistPatients = async (therapistId) => {
   if (!isFirebaseConfigured()) return { success: false, error: 'Firebase not configured' };
   
   try {
-    const q = query(
+    const strictQuery = query(
       collection(db, 'users'),
       where('therapistId', '==', therapistId),
-      where('role', '==', 'patient')
+      where('role', '==', 'patient'),
+      limit(MAX_QUERY_LIMIT)
     );
-    
-    const querySnapshot = await getDocs(q);
+
+    let querySnapshot = await getDocs(strictQuery);
+
+    // Backward compatibility for older profiles that may not include the role field.
+    if (querySnapshot.empty) {
+      const fallbackQuery = query(
+        collection(db, 'users'),
+        where('therapistId', '==', therapistId),
+        limit(MAX_QUERY_LIMIT)
+      );
+      querySnapshot = await getDocs(fallbackQuery);
+    }
+
     const patients = [];
     
     querySnapshot.forEach((doc) => {
@@ -387,33 +519,31 @@ export const getTherapistPatients = async (therapistId) => {
  * @param {number} days - Number of days to fetch
  */
 export const getPatientSessionHistory = async (patientId, days = 30) => {
-  if (!isFirebaseConfigured()) return { success: false, error: 'Firebase not configured' };
+  const effectiveLimit = MAX_QUERY_LIMIT;
+  const localSessions = getLocalSessions(patientId);
+  const localFallback = () => ({
+    success: true,
+    source: 'local',
+    data: sortSessions(filterByDays(localSessions, days), 'asc')
+  });
+
+  if (!isFirebaseConfigured()) return localFallback();
   
   try {
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days);
-    
-    const q = query(
-      collection(db, 'sessions'),
-      where('userId', '==', patientId),
-      where('createdAt', '>=', Timestamp.fromDate(startDate)),
-      orderBy('createdAt', 'asc')
+    const [userIdSessions, legacyUidSessions, legacyPatientIdSessions] = await Promise.all([
+      fetchSessionsByOwnerField('userId', patientId, effectiveLimit),
+      fetchSessionsByOwnerField('uid', patientId, effectiveLimit),
+      fetchSessionsByOwnerField('patientId', patientId, effectiveLimit)
+    ]);
+
+    const merged = mergeSessionsById(
+      [...userIdSessions, ...legacyUidSessions, ...legacyPatientIdSessions],
+      localSessions
     );
-    
-    const querySnapshot = await getDocs(q);
-    const sessions = [];
-    
-    querySnapshot.forEach((doc) => {
-      sessions.push({
-        id: doc.id,
-        ...doc.data()
-      });
-    });
-    
-    return { success: true, data: sessions };
+    return { success: true, data: sortSessions(filterByDays(merged, days), 'asc') };
   } catch (error) {
     console.error('Error getting patient history:', error);
-    return { success: false, error };
+    return localFallback();
   }
 };
 

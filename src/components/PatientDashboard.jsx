@@ -1,89 +1,33 @@
 /**
  * PatientDashboard.jsx
- * Main patient dashboard with Medical Design System
- * Shows exercise history, progress, and quick actions
+ * Tabbed patient dashboard with exercise-aware metrics and persistent recovery history.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { switchPatientMode, validateTherapistCode, getUserSessions } from '../utils/firestore';
+import {
+  switchPatientMode,
+  validateTherapistCode,
+  getUserSessions
+} from '../utils/firestore';
 import { exerciseLibrary } from '../data/exercises';
 import ExerciseDemo from './ExerciseDemo';
 import PhysioLogo from './PhysioLogo';
-import { auth } from '../firebase';
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-
-// Simple SVG Icons
-const PlayIcon = ({ className }) => (
-  <svg className={className} fill="currentColor" viewBox="0 0 24 24">
-    <path d="M8 5v14l11-7z"/>
-  </svg>
-);
-
-const CalendarIcon = ({ className }) => (
-  <svg className={className} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
-    <line x1="16" y1="2" x2="16" y2="6"/>
-    <line x1="8" y1="2" x2="8" y2="6"/>
-    <line x1="3" y1="10" x2="21" y2="10"/>
-  </svg>
-);
-
-const TrendingUpIcon = ({ className }) => (
-  <svg className={className} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-    <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>
-    <polyline points="17 6 23 6 23 12"/>
-  </svg>
-);
-
-const ClockIcon = ({ className }) => (
-  <svg className={className} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-    <circle cx="12" cy="12" r="10"/>
-    <polyline points="12 6 12 12 16 14"/>
-  </svg>
-);
-
-const CheckCircleIcon = ({ className }) => (
-  <svg className={className} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-    <polyline points="22 4 12 14.01 9 11.01"/>
-  </svg>
-);
-
-const BarChartIcon = ({ className }) => (
-  <svg className={className} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-    <line x1="18" y1="20" x2="18" y2="10"/>
-    <line x1="12" y1="20" x2="12" y2="4"/>
-    <line x1="6" y1="20" x2="6" y2="14"/>
-  </svg>
-);
-
-const TargetIcon = ({ className }) => (
-  <svg className={className} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-    <circle cx="12" cy="12" r="10"/>
-    <circle cx="12" cy="12" r="6"/>
-    <circle cx="12" cy="12" r="2"/>
-  </svg>
-);
-
-const AwardIcon = ({ className }) => (
-  <svg className={className} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-    <circle cx="12" cy="8" r="7"/>
-    <polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/>
-  </svg>
-);
-
-const ChevronRightIcon = ({ className }) => (
-  <svg className={className} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-    <polyline points="9 18 15 12 9 6"/>
-  </svg>
-);
-
-const ActivityIcon = ({ className }) => (
-  <svg className={className} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-  </svg>
-);
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  CartesianGrid,
+  LineChart,
+  Line,
+  Legend,
+  ReferenceLine,
+  BarChart,
+  Bar
+} from 'recharts';
 
 const SettingsIcon = ({ className }) => (
   <svg className={className} fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
@@ -99,7 +43,85 @@ const XIcon = ({ className }) => (
   </svg>
 );
 
-const PatientDashboard = ({ user, onStartSession, onNavigate, onLogout }) => {
+const TabButton = ({ active, label, onClick }) => (
+  <button
+    onClick={onClick}
+    className={`px-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${
+      active
+        ? 'bg-teal-600 text-white shadow'
+        : 'bg-white text-medical-text-secondary hover:bg-teal-50 border border-gray-200'
+    }`}
+  >
+    {label}
+  </button>
+);
+
+const toDateLabel = (date) => date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+const toDateKey = (date) => {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d.toISOString().slice(0, 10);
+};
+
+const getStreak = (records) => {
+  if (!records.length) return 0;
+
+  const uniqueDays = [...new Set(records.map((r) => r.dateKey))].sort((a, b) => new Date(b) - new Date(a));
+  let streak = 1;
+
+  for (let i = 1; i < uniqueDays.length; i++) {
+    const prev = new Date(uniqueDays[i - 1]);
+    const curr = new Date(uniqueDays[i]);
+    const diffDays = Math.round((prev - curr) / (1000 * 60 * 60 * 24));
+    if (diffDays === 1) {
+      streak += 1;
+    } else {
+      break;
+    }
+  }
+
+  return streak;
+};
+
+const mapSession = (session) => {
+  let sessionDate = new Date();
+  if (session?.createdAt?.toDate) {
+    sessionDate = session.createdAt.toDate();
+  } else if (typeof session?.createdAt?.seconds === 'number') {
+    sessionDate = new Date(session.createdAt.seconds * 1000);
+  } else if (typeof session?.createdAt === 'string' || typeof session?.createdAt === 'number') {
+    const parsed = new Date(session.createdAt);
+    if (!Number.isNaN(parsed.getTime())) {
+      sessionDate = parsed;
+    }
+  }
+
+  const fallbackImprovement = (session.maxAngle || 0) - (session.baselineROM || 0);
+
+  return {
+    id: session.id,
+    exerciseId: session.exerciseId || 'unknown',
+    exerciseName: session.exerciseName || 'Exercise',
+    dateLabel: toDateLabel(sessionDate),
+    dateKey: toDateKey(sessionDate),
+    createdAtMs: sessionDate.getTime(),
+    totalReps: session.totalReps ?? session.reps ?? 0,
+    maxAngle: Math.round(session.maxAngle || 0),
+    baselineROM: Math.round(session.baselineROM || 0),
+    targetAngle: Math.round(session.targetAngle || 0),
+    targetReps: session.targetReps || 0,
+    targetSets: session.targetSets || 0,
+    sets: session.sets || 1,
+    durationMin: Math.max(1, Math.round((session.duration || 0) / 60)),
+    improvementDeg: Math.round(session.improvement ?? fallbackImprovement),
+    postureAccuracy: Math.round(session.postureAccuracy || 0)
+  };
+};
+
+const PatientDashboard = ({ user, onStartSession, onLogout }) => {
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [exerciseFilter, setExerciseFilter] = useState('all');
   const [selectedExercise, setSelectedExercise] = useState(null);
   const [showExerciseDemo, setShowExerciseDemo] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -108,39 +130,29 @@ const PatientDashboard = ({ user, onStartSession, onNavigate, onLogout }) => {
   const [modeError, setModeError] = useState(null);
   const [modeSuccess, setModeSuccess] = useState(null);
 
-  // Real session history state
   const [sessionHistory, setSessionHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(true);
 
-  // Fetch real session history from Firebase on mount
   useEffect(() => {
     const fetchHistory = async () => {
       if (!user?.uid || user?.isDemo) {
-        // Demo / unauthenticated: show placeholder data
-        setSessionHistory([
-          { id: 1, date: '2026-03-08', exerciseName: 'Knee Flexion', maxAngle: 118, duration: 12, totalReps: 15, improvement: 8 },
-          { id: 2, date: '2026-03-06', exerciseName: 'Knee Flexion', maxAngle: 112, duration: 10, totalReps: 12, improvement: 5 },
-          { id: 3, date: '2026-03-04', exerciseName: 'Knee Extension', maxAngle: 108, duration: 11, totalReps: 14, improvement: 3 },
-        ]);
+        const demo = [
+          { id: 'd1', exerciseId: 'knee-flexion', exerciseName: 'Knee Flexion', createdAt: '2026-03-29', maxAngle: 72, baselineROM: 42, targetAngle: 145, totalReps: 40, duration: 900, improvement: 12, postureAccuracy: 88 },
+          { id: 'd2', exerciseId: 'knee-flexion', exerciseName: 'Knee Flexion', createdAt: '2026-03-27', maxAngle: 65, baselineROM: 42, targetAngle: 145, totalReps: 34, duration: 760, improvement: 8, postureAccuracy: 82 },
+          { id: 'd3', exerciseId: 'knee-extension', exerciseName: 'Knee Extension', createdAt: '2026-03-24', maxAngle: 164, baselineROM: 142, targetAngle: 180, totalReps: 31, duration: 720, improvement: 10, postureAccuracy: 85 },
+          { id: 'd4', exerciseId: 'bodyweight-squats', exerciseName: 'Bodyweight Squats', createdAt: '2026-03-21', maxAngle: 82, baselineROM: 48, targetAngle: 90, totalReps: 45, duration: 930, improvement: 14, postureAccuracy: 80 }
+        ];
+        setSessionHistory(demo.map(mapSession).sort((a, b) => b.createdAtMs - a.createdAtMs));
         setHistoryLoading(false);
         return;
       }
+
       setHistoryLoading(true);
       try {
-        const result = await getUserSessions(user.uid, 20);
-        if (result.success && result.data.length > 0) {
-          const formatted = result.data.map((s) => ({
-            id: s.id,
-            date: s.createdAt?.toDate
-              ? s.createdAt.toDate().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-              : new Date(s.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-            exerciseName: s.exerciseName || 'Exercise',
-            maxAngle: Math.round(s.maxAngle || 0),
-            duration: Math.round((s.duration || 0) / 60) || 1,
-            totalReps: s.totalReps || 0,
-            improvement: s.improvement || 0,
-          }));
-          setSessionHistory(formatted);
+        const result = await getUserSessions(user.uid, 100);
+        if (result.success) {
+          const mapped = result.data.map(mapSession).sort((a, b) => b.createdAtMs - a.createdAtMs);
+          setSessionHistory(mapped);
         }
       } catch (err) {
         console.error('Error loading session history:', err);
@@ -148,42 +160,75 @@ const PatientDashboard = ({ user, onStartSession, onNavigate, onLogout }) => {
         setHistoryLoading(false);
       }
     };
+
     fetchHistory();
   }, [user?.uid, user?.isDemo]);
 
-  // Compute stats from real session data
-  const stats = (() => {
-    if (sessionHistory.length === 0) return { totalSessions: 0, weekStreak: 0, avgAngleImprovement: 0, nextGoal: 145 };
-    const angles = sessionHistory.map(s => s.maxAngle);
-    const first = angles[angles.length - 1] || 0;
-    const latest = angles[0] || 0;
-    const avgImprovement = first > 0 ? Math.round(((latest - first) / first) * 100) : 0;
-    // streak: count consecutive days from today
-    let streak = 0;
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    // (simplified streak calculation based on session count in last 7 days)
-    return {
-      totalSessions: sessionHistory.length,
-      weekStreak: Math.min(sessionHistory.length, 7),
-      avgAngleImprovement: Math.max(0, avgImprovement),
-      nextGoal: Math.min(180, (Math.max(...angles) || 90) + 10)
-    };
-  })();
+  const filteredHistory = useMemo(() => {
+    if (exerciseFilter === 'all') return sessionHistory;
+    return sessionHistory.filter((s) => s.exerciseId === exerciseFilter);
+  }, [exerciseFilter, sessionHistory]);
 
-  // Chart data: oldest→newest for improvement sparkline
-  const chartData = [...sessionHistory].reverse().map((s, i) => ({
-    session: i + 1,
-    angle: s.maxAngle,
-    label: s.date,
-  }));
+  const stats = useMemo(() => {
+    if (!filteredHistory.length) {
+      return {
+        totalSessions: 0,
+        weekStreak: 0,
+        avgImprovement: 0,
+        nextGoal: 0,
+        avgPosture: 0
+      };
+    }
 
-  // Use exercise library instead of hardcoded exercises
-  const exercises = exerciseLibrary;
+    const latest = filteredHistory[0];
+    const totalSessions = filteredHistory.length;
+    const weekStreak = getStreak(filteredHistory);
+    const avgImprovement = Math.round(filteredHistory.reduce((sum, s) => sum + (s.improvementDeg || 0), 0) / filteredHistory.length);
+    const avgPosture = Math.round(filteredHistory.reduce((sum, s) => sum + (s.postureAccuracy || 0), 0) / filteredHistory.length);
 
-  const fadeInUp = {
-    hidden: { opacity: 0, y: 20 },
-    visible: { opacity: 1, y: 0 }
-  };
+    let nextGoal = 0;
+    if (exerciseFilter !== 'all') {
+      const exerciseTarget = exerciseLibrary.find((e) => e.id === exerciseFilter)?.targetAngle || latest.targetAngle || 0;
+      nextGoal = latest.maxAngle >= exerciseTarget ? Math.min(180, exerciseTarget + 5) : exerciseTarget;
+    } else {
+      const maxAngle = Math.max(...filteredHistory.map((s) => s.maxAngle || 0));
+      nextGoal = Math.min(180, maxAngle + 5);
+    }
+
+    return { totalSessions, weekStreak, avgImprovement, nextGoal, avgPosture };
+  }, [exerciseFilter, filteredHistory]);
+
+  const trendData = useMemo(() => {
+    return [...filteredHistory]
+      .sort((a, b) => a.createdAtMs - b.createdAtMs)
+      .map((s, idx) => ({
+        i: idx + 1,
+        label: s.dateLabel,
+        maxAngle: s.maxAngle,
+        baseline: s.baselineROM,
+        target: s.targetAngle || null,
+        posture: s.postureAccuracy
+      }));
+  }, [filteredHistory]);
+
+  const exerciseRecovery = useMemo(() => {
+    const grouped = {};
+    sessionHistory.forEach((s) => {
+      if (!grouped[s.exerciseId]) {
+        grouped[s.exerciseId] = { name: s.exerciseName, sessions: 0, totalImprovement: 0, totalPosture: 0 };
+      }
+      grouped[s.exerciseId].sessions += 1;
+      grouped[s.exerciseId].totalImprovement += s.improvementDeg || 0;
+      grouped[s.exerciseId].totalPosture += s.postureAccuracy || 0;
+    });
+
+    return Object.values(grouped).map((g) => ({
+      name: g.name,
+      improvement: Math.round(g.totalImprovement / Math.max(1, g.sessions)),
+      posture: Math.round(g.totalPosture / Math.max(1, g.sessions)),
+      sessions: g.sessions
+    }));
+  }, [sessionHistory]);
 
   const handleSwitchMode = async () => {
     setModeError(null);
@@ -192,8 +237,7 @@ const PatientDashboard = ({ user, onStartSession, onNavigate, onLogout }) => {
 
     try {
       const newMode = user.patientType === 'independent' ? 'with_therapist' : 'independent';
-      
-      // If switching to with_therapist, validate therapist code
+
       if (newMode === 'with_therapist') {
         if (!therapistCodeInput.trim()) {
           setModeError('Please enter a therapist code');
@@ -215,7 +259,6 @@ const PatientDashboard = ({ user, onStartSession, onNavigate, onLogout }) => {
           return;
         }
       } else {
-        // Switching to independent
         const switchResult = await switchPatientMode(user.uid, newMode);
         if (!switchResult.success) {
           setModeError('Failed to switch mode. Please try again.');
@@ -226,13 +269,11 @@ const PatientDashboard = ({ user, onStartSession, onNavigate, onLogout }) => {
 
       setModeSuccess(`Successfully switched to ${newMode === 'independent' ? 'Independent Mode' : 'With Therapist Mode'}`);
       setTherapistCodeInput('');
-      
-      // Close modal after 2 seconds and reload page
+
       setTimeout(() => {
         setShowSettingsModal(false);
         window.location.reload();
-      }, 2000);
-
+      }, 1500);
     } catch (error) {
       console.error('Error switching mode:', error);
       setModeError('Failed to switch mode. Please try again.');
@@ -246,397 +287,254 @@ const PatientDashboard = ({ user, onStartSession, onNavigate, onLogout }) => {
     setShowExerciseDemo(true);
   };
 
-  const handleStartExercise = (selectedLeg) => {
+  const handleStartExercise = (leg) => {
     setShowExerciseDemo(false);
-    onStartSession(selectedExercise, selectedLeg);
+    onStartSession(selectedExercise, leg);
   };
 
-  const handleBackFromDemo = () => {
-    setShowExerciseDemo(false);
-    setSelectedExercise(null);
-  };
-
-  // Show exercise demo screen if an exercise is selected
   if (showExerciseDemo && selectedExercise) {
     return (
       <ExerciseDemo
         exercise={selectedExercise}
         onStart={handleStartExercise}
-        onBack={handleBackFromDemo}
+        onBack={() => {
+          setShowExerciseDemo(false);
+          setSelectedExercise(null);
+        }}
       />
     );
   }
 
   return (
     <div className="min-h-screen bg-medical-background">
-    {/* ── Physio Top Bar ── */}
-    <div className="bg-white border-b border-gray-200 px-6 py-3 flex justify-between items-center sticky top-0 z-20 shadow-sm">
-      <div className="flex items-center gap-3">
-        <div className="bg-gradient-to-br from-teal-500 to-cyan-600 rounded-lg p-2">
-          <PhysioLogo className="w-5 h-5" color="white" />
+      <div className="bg-white border-b border-gray-200 px-6 py-3 flex justify-between items-center sticky top-0 z-20 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="bg-gradient-to-br from-teal-500 to-cyan-600 rounded-lg p-2">
+            <PhysioLogo className="w-5 h-5" color="white" />
+          </div>
+          <div>
+            <h1 className="text-base font-bold text-medical-text-primary leading-tight">Physio</h1>
+            <p className="text-xs text-medical-text-secondary">
+              {user?.isDemo && 'Demo - '}{user?.name || user?.email}
+            </p>
+          </div>
         </div>
-        <div>
-          <h1 className="text-base font-bold text-medical-text-primary leading-tight">Physio</h1>
-          <p className="text-xs text-medical-text-secondary">
-            {user?.isDemo && '🚀 Demo • '}{user?.name || user?.email}
-          </p>
-        </div>
-      </div>
-      <button
-        onClick={() => setShowSettingsModal(true)}
-        aria-label="Settings"
-        className="p-2 rounded-xl hover:bg-gray-100 text-medical-text-secondary hover:text-medical-primary transition-colors"
-      >
-        <SettingsIcon className="w-6 h-6" />
-      </button>
-    </div>
-
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-
-      {/* Welcome Section */}
-      <motion.div
-        initial="hidden"
-        animate="visible"
-        variants={fadeInUp}
-        className="mb-8"
-      >
-        <h1 className="text-3xl font-bold text-medical-text-primary mb-2">
-          Welcome back, {user.name || 'Patient'}! 👋
-        </h1>
-        <p className="text-medical-text-secondary">
-          {user.hasTherapist 
-            ? "Your therapist can monitor your progress and provide guidance."
-            : "You're practicing independently. Keep up the great work!"}
-        </p>
-        {user.patientType === 'independent' && (
-          <div className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 bg-teal-50 border border-teal-200 rounded-full">
-            <div className="w-2 h-2 bg-teal-500 rounded-full"></div>
-            <span className="text-xs font-medium text-teal-700">Independent Mode</span>
-          </div>
-        )}
-        {user.hasTherapist && (
-          <div className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 bg-indigo-50 border border-indigo-200 rounded-full">
-            <div className="w-2 h-2 bg-indigo-500 rounded-full"></div>
-            <span className="text-xs font-medium text-indigo-700">Connected to Therapist</span>
-          </div>
-        )}
-      </motion.div>
-
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        <motion.div
-          initial="hidden"
-          animate="visible"
-          variants={fadeInUp}
-          transition={{ delay: 0.1 }}
-          className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm hover:shadow-md transition-shadow"
+        <button
+          onClick={() => setShowSettingsModal(true)}
+          aria-label="Settings"
+          className="p-2 rounded-xl hover:bg-gray-100 text-medical-text-secondary hover:text-medical-primary transition-colors"
         >
-          <div className="flex items-center justify-between mb-4">
-            <div className="p-3 bg-teal-100 rounded-xl">
-              <ActivityIcon className="w-6 h-6 text-medical-primary" />
-            </div>
-            <span className="text-2xl font-bold text-medical-text-primary">
-              {stats.totalSessions}
-            </span>
-          </div>
-          <h3 className="text-sm font-medium text-medical-text-secondary">Total Sessions</h3>
-        </motion.div>
-
-        <motion.div
-          initial="hidden"
-          animate="visible"
-          variants={fadeInUp}
-          transition={{ delay: 0.2 }}
-          className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm hover:shadow-md transition-shadow"
-        >
-          <div className="flex items-center justify-between mb-4">
-            <div className="p-3 bg-orange-100 rounded-xl">
-              <CalendarIcon className="w-6 h-6 text-orange-600" />
-            </div>
-            <span className="text-2xl font-bold text-medical-text-primary">
-              {stats.weekStreak} days
-            </span>
-          </div>
-          <h3 className="text-sm font-medium text-medical-text-secondary">Week Streak 🔥</h3>
-        </motion.div>
-
-        <motion.div
-          initial="hidden"
-          animate="visible"
-          variants={fadeInUp}
-          transition={{ delay: 0.3 }}
-          className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm hover:shadow-md transition-shadow"
-        >
-          <div className="flex items-center justify-between mb-4">
-            <div className="p-3 bg-green-100 rounded-xl">
-              <TrendingUpIcon className="w-6 h-6 text-green-600" />
-            </div>
-            <span className="text-2xl font-bold text-medical-text-primary">
-              +{stats.avgAngleImprovement}°
-            </span>
-          </div>
-          <h3 className="text-sm font-medium text-medical-text-secondary">Avg Improvement</h3>
-        </motion.div>
-
-        <motion.div
-          initial="hidden"
-          animate="visible"
-          variants={fadeInUp}
-          transition={{ delay: 0.4 }}
-          className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm hover:shadow-md transition-shadow"
-        >
-          <div className="flex items-center justify-between mb-4">
-            <div className="p-3 bg-indigo-100 rounded-xl">
-              <TargetIcon className="w-6 h-6 text-medical-secondary" />
-            </div>
-            <span className="text-2xl font-bold text-medical-text-primary">
-              {stats.nextGoal}°
-            </span>
-          </div>
-          <h3 className="text-sm font-medium text-medical-text-secondary">Next Goal</h3>
-        </motion.div>
+          <SettingsIcon className="w-6 h-6" />
+        </button>
       </div>
 
-      {/* Main Content Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Left Column - Exercises */}
-        <div className="lg:col-span-2 space-y-6">
-          {/* Exercise Selection Call-to-Action */}
-          <motion.div
-            initial="hidden"
-            animate="visible"
-            variants={fadeInUp}
-            transition={{ delay: 0.5 }}
-            className="bg-gradient-to-br from-medical-primary to-teal-600 rounded-2xl p-8 text-white shadow-lg"
-          >
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h2 className="text-2xl font-bold mb-2">Ready for today's session?</h2>
-                <p className="text-teal-100 mb-1">Let's improve your knee mobility</p>
-                <p className="text-white/90 text-sm font-medium flex items-center gap-2 mt-2">
-                  <span className="inline-block w-2 h-2 bg-white rounded-full animate-pulse"></span>
-                  Select an exercise below to begin
-                </p>
-              </div>
-              <div className="text-5xl">🎯</div>
-            </div>
-            <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl p-4 mt-4">
-              <p className="text-white/90 text-sm text-center">
-                💡 <span className="font-semibold">Tip:</span> Each exercise includes a demo and instructions before you start
-              </p>
-            </div>
-          </motion.div>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <div className="flex flex-wrap gap-2 mb-6">
+          <TabButton active={activeTab === 'dashboard'} label="Dashboard" onClick={() => setActiveTab('dashboard')} />
+          <TabButton active={activeTab === 'exercises'} label="Exercises" onClick={() => setActiveTab('exercises')} />
+          <TabButton active={activeTab === 'history'} label="Session History" onClick={() => setActiveTab('history')} />
+          <TabButton active={activeTab === 'recovery'} label="Recovery" onClick={() => setActiveTab('recovery')} />
+        </div>
 
-          {/* Available Exercises */}
-          <motion.div
-            initial="hidden"
-            animate="visible"
-            variants={fadeInUp}
-            transition={{ delay: 0.6 }}
-            className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm"
-          >
-            <h2 className="text-xl font-bold text-medical-text-primary mb-4 flex items-center gap-2">
-              <AwardIcon className="w-6 h-6 text-medical-primary" />
-              Available Exercises
-            </h2>
-            <div className="space-y-4">
-              {exercises.map((exercise, index) => (
-                <motion.div
-                  key={exercise.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.1 * index }}
-                  className="group relative p-5 border-2 border-gray-200 rounded-xl hover:border-medical-primary hover:bg-gradient-to-br hover:from-teal-50 hover:to-cyan-50 transition-all cursor-pointer shadow-sm hover:shadow-md"
-                  onClick={() => handleExerciseSelect(exercise)}
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                >
-                  {/* Click indicator badge */}
-                  <div className="absolute top-3 right-3 bg-medical-primary text-white text-xs px-3 py-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity font-medium animate-pulse">
-                    Click to start →
-                  </div>
-                  
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-2">
-                        <div className="w-10 h-10 bg-gradient-to-br from-medical-primary to-teal-600 rounded-lg flex items-center justify-center text-white font-bold text-lg">
-                          {exercise.name.charAt(0)}
-                        </div>
-                        <div>
-                          <h3 className="font-bold text-medical-text-primary text-lg group-hover:text-medical-primary transition-colors">
-                            {exercise.name}
-                          </h3>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className="px-2 py-0.5 bg-teal-100 text-teal-700 rounded-full font-medium text-xs">
-                              {exercise.difficulty}
-                            </span>
-                            <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full font-medium text-xs">
-                              {exercise.category}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                      
-                      <div className="mt-3 grid grid-cols-3 gap-3 text-xs">
-                        <div className="flex items-center gap-1 text-medical-text-secondary">
-                          <span className="font-semibold text-medical-primary">🎯</span>
-                          <span className="font-medium">{exercise.targetAngle}° target</span>
-                        </div>
-                        <div className="flex items-center gap-1 text-medical-text-secondary">
-                          <span className="font-semibold text-medical-primary">⏱️</span>
-                          <span className="font-medium">{exercise.duration}</span>
-                        </div>
-                        <div className="flex items-center gap-1 text-medical-text-secondary">
-                          <span className="font-semibold text-medical-primary">📊</span>
-                          <span className="font-medium">{exercise.targetSets}×{exercise.targetReps} reps</span>
-                        </div>
-                      </div>
-                      
-                      <div className="mt-3 flex flex-wrap gap-1">
-                        {exercise.muscleGroups?.slice(0, 3).map((muscle) => (
-                          <span key={muscle} className="text-xs px-2 py-1 bg-gray-100 text-gray-600 rounded-md">
-                            {muscle}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                    <ChevronRightIcon className="w-6 h-6 text-gray-400 group-hover:text-medical-primary group-hover:translate-x-1 transition-all" />
-                  </div>
-                </motion.div>
+        {(activeTab === 'dashboard' || activeTab === 'history' || activeTab === 'recovery') && (
+          <div className="bg-white rounded-2xl p-4 border border-gray-200 mb-6 flex flex-wrap items-center gap-3">
+            <label className="text-sm font-semibold text-medical-text-secondary">Exercise filter</label>
+            <select
+              value={exerciseFilter}
+              onChange={(e) => setExerciseFilter(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+            >
+              <option value="all">All exercises</option>
+              {exerciseLibrary.map((ex) => (
+                <option key={ex.id} value={ex.id}>{ex.name}</option>
+              ))}
+            </select>
+            <span className="text-xs text-gray-500">
+              Showing {filteredHistory.length} session{filteredHistory.length === 1 ? '' : 's'}
+            </span>
+          </div>
+        )}
+
+        {activeTab === 'dashboard' && (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+              {[
+                { label: 'Total Sessions', value: stats.totalSessions },
+                { label: 'Streak', value: `${stats.weekStreak} day${stats.weekStreak === 1 ? '' : 's'}` },
+                { label: 'Avg Improvement', value: `${stats.avgImprovement} deg` },
+                { label: 'Next Goal', value: `${stats.nextGoal} deg` },
+                { label: 'Posture Score', value: `${stats.avgPosture}%` }
+              ].map((card) => (
+                <div key={card.label} className="bg-white rounded-2xl p-5 border border-gray-200 shadow-sm">
+                  <div className="text-2xl font-bold text-medical-text-primary">{card.value}</div>
+                  <div className="text-xs mt-1 text-medical-text-secondary uppercase tracking-wide">{card.label}</div>
+                </div>
               ))}
             </div>
-          </motion.div>
-        </div>
 
-        {/* Right Column - Session History & Improvement */}
-        <div className="space-y-6">
-          {/* Improvement Sparkline Chart */}
-          <motion.div
-            initial="hidden"
-            animate="visible"
-            variants={fadeInUp}
-            transition={{ delay: 0.7 }}
-            className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm"
-          >
-            <h2 className="text-xl font-bold text-medical-text-primary mb-1 flex items-center gap-2">
-              <TrendingUpIcon className="w-6 h-6 text-green-500" />
-              ROM Improvement
-            </h2>
-            <p className="text-xs text-medical-text-secondary mb-4">Max knee angle per session</p>
-            {historyLoading ? (
-              <div className="flex items-center justify-center h-28">
-                <div className="w-8 h-8 border-4 border-medical-primary/30 border-t-medical-primary rounded-full animate-spin" />
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm">
+                <h3 className="text-lg font-bold text-medical-text-primary mb-1">Recovery Trend</h3>
+                <p className="text-xs text-medical-text-secondary mb-4">Max angle progression across sessions</p>
+                {historyLoading ? (
+                  <div className="h-56 flex items-center justify-center text-sm text-gray-400">Loading...</div>
+                ) : trendData.length ? (
+                  <ResponsiveContainer width="100%" height={240}>
+                    <AreaChart data={trendData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#EEF2F7" />
+                      <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                      <YAxis tick={{ fontSize: 11 }} />
+                      <Tooltip />
+                      <Area type="monotone" dataKey="maxAngle" stroke="#0D9488" fill="#99F6E4" fillOpacity={0.35} name="Max Angle" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-56 flex items-center justify-center text-sm text-gray-400">No sessions yet</div>
+                )}
               </div>
-            ) : chartData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={160}>
-                <AreaChart data={chartData} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
-                  <defs>
-                    <linearGradient id="colorAngle" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#0D9488" stopOpacity={0.3}/>
-                      <stop offset="95%" stopColor="#0D9488" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" />
-                  <XAxis dataKey="label" tick={{ fontSize: 10 }} stroke="#9CA3AF" />
-                  <YAxis tick={{ fontSize: 10 }} stroke="#9CA3AF" domain={['auto','auto']} />
-                  <Tooltip
-                    contentStyle={{ backgroundColor: '#fff', border: 'none', borderRadius: 10, boxShadow: '0 4px 20px rgba(0,0,0,0.08)', fontSize: 12 }}
-                    formatter={(v) => [`${v}°`, 'Max Angle']}
-                  />
-                  <Area type="monotone" dataKey="angle" stroke="#0D9488" fill="url(#colorAngle)" strokeWidth={2.5} dot={{ r: 3, fill: '#0D9488' }} />
-                </AreaChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="h-28 flex flex-col items-center justify-center text-center">
-                <ActivityIcon className="w-8 h-8 text-gray-300 mb-2" />
-                <p className="text-sm text-gray-400">Complete your first session to see progress</p>
-              </div>
-            )}
-          </motion.div>
 
-          {/* Recent Sessions List */}
-          <motion.div
-            initial="hidden"
-            animate="visible"
-            variants={fadeInUp}
-            transition={{ delay: 0.75 }}
-            className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm"
-          >
-            <h2 className="text-xl font-bold text-medical-text-primary mb-4 flex items-center gap-2">
-              <BarChartIcon className="w-6 h-6 text-medical-secondary" />
-              Session History
-            </h2>
-            {historyLoading ? (
-              <div className="space-y-3">
-                {[1,2,3].map(i => (
-                  <div key={i} className="h-16 bg-gray-100 rounded-xl animate-pulse" />
-                ))}
-              </div>
-            ) : sessionHistory.length > 0 ? (
-              <div className="space-y-3 max-h-[360px] overflow-y-auto pr-1">
-                {sessionHistory.map((session) => (
-                  <div
-                    key={session.id}
-                    className="p-4 border border-gray-100 rounded-xl hover:bg-gray-50 transition-colors"
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <div>
-                        <span className="text-sm font-semibold text-medical-text-primary">{session.date}</span>
-                        <span className="ml-2 text-xs text-gray-400">{session.exerciseName}</span>
+              <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm">
+                <h3 className="text-lg font-bold text-medical-text-primary mb-4">Recent Sessions</h3>
+                {historyLoading ? (
+                  <div className="text-sm text-gray-400">Loading...</div>
+                ) : filteredHistory.length ? (
+                  <div className="space-y-3 max-h-[240px] overflow-y-auto pr-1">
+                    {filteredHistory.slice(0, 6).map((session) => (
+                      <div key={session.id} className="p-3 border border-gray-100 rounded-xl">
+                        <div className="flex justify-between text-sm font-semibold text-medical-text-primary">
+                          <span>{session.dateLabel} - {session.exerciseName}</span>
+                          <span className="text-teal-600">{session.maxAngle} deg</span>
+                        </div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          {session.totalReps} reps - {session.durationMin} min - posture {session.postureAccuracy}%
+                        </div>
                       </div>
-                      {session.improvement > 0 ? (
-                        <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded-full">+{session.improvement}%</span>
-                      ) : (
-                        <CheckCircleIcon className="w-5 h-5 text-green-500" />
-                      )}
-                    </div>
-                    <div className="grid grid-cols-3 gap-2 text-xs text-medical-text-secondary">
-                      <div>
-                        <div className="font-bold text-medical-primary text-sm">{session.maxAngle}°</div>
-                        <div>Max Angle</div>
-                      </div>
-                      <div>
-                        <div className="font-semibold text-medical-text-primary">{session.duration}m</div>
-                        <div>Duration</div>
-                      </div>
-                      <div>
-                        <div className="font-semibold text-medical-text-primary">{session.totalReps}</div>
-                        <div>Reps</div>
-                      </div>
-                    </div>
+                    ))}
                   </div>
-                ))}
+                ) : (
+                  <div className="text-sm text-gray-400">No sessions yet</div>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+
+        {activeTab === 'exercises' && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {exerciseLibrary.map((exercise) => (
+              <motion.button
+                key={exercise.id}
+                onClick={() => handleExerciseSelect(exercise)}
+                whileHover={{ scale: 1.01 }}
+                whileTap={{ scale: 0.99 }}
+                className="text-left bg-white border border-gray-200 rounded-2xl p-5 shadow-sm hover:border-teal-400"
+              >
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h3 className="text-lg font-bold text-medical-text-primary">{exercise.name}</h3>
+                    <p className="text-sm text-medical-text-secondary mt-1">{exercise.description}</p>
+                  </div>
+                  <span className="text-xs px-2 py-1 rounded-full bg-teal-100 text-teal-700 font-semibold">{exercise.difficulty}</span>
+                </div>
+                <div className="grid grid-cols-3 gap-3 mt-4 text-xs text-gray-600">
+                  <div>Target: <span className="font-semibold">{exercise.targetAngle} deg</span></div>
+                  <div>Sets: <span className="font-semibold">{exercise.targetSets}</span></div>
+                  <div>Reps: <span className="font-semibold">{exercise.targetReps}</span></div>
+                </div>
+                <div className="mt-4 text-sm font-semibold text-teal-700">Open Demo & Start</div>
+              </motion.button>
+            ))}
+          </div>
+        )}
+
+        {activeTab === 'history' && (
+          <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm">
+            <h3 className="text-xl font-bold text-medical-text-primary mb-4">Session History</h3>
+            {historyLoading ? (
+              <div className="text-sm text-gray-400">Loading sessions...</div>
+            ) : filteredHistory.length ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm text-gray-800">
+                  <thead>
+                    <tr className="border-b border-gray-200 text-left text-gray-500">
+                      <th className="py-3">Date</th>
+                      <th className="py-3">Exercise</th>
+                      <th className="py-3">Reps</th>
+                      <th className="py-3">Max Angle</th>
+                      <th className="py-3">Improvement</th>
+                      <th className="py-3">Posture</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredHistory.map((s) => (
+                      <tr key={s.id} className="border-b border-gray-100 text-gray-800">
+                        <td className="py-3 text-gray-800">{s.dateLabel}</td>
+                        <td className="py-3 text-gray-800">{s.exerciseName}</td>
+                        <td className="py-3 text-gray-800">{s.totalReps}</td>
+                        <td className="py-3 text-gray-800">{s.maxAngle} deg</td>
+                        <td className="py-3 text-gray-800">{s.improvementDeg} deg</td>
+                        <td className="py-3 text-gray-800">{s.postureAccuracy}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             ) : (
-              <div className="py-10 text-center">
-                <CalendarIcon className="w-10 h-10 text-gray-300 mx-auto mb-3" />
-                <p className="text-sm text-gray-500 font-medium">No sessions yet</p>
-                <p className="text-xs text-gray-400 mt-1">Complete an exercise to see your history here</p>
-              </div>
+              <div className="text-sm text-gray-400">No sessions available for this filter.</div>
             )}
-          </motion.div>
+          </div>
+        )}
 
-          {/* Progress Tip */}
-          <motion.div
-            initial="hidden"
-            animate="visible"
-            variants={fadeInUp}
-            transition={{ delay: 0.85 }}
-            className="bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl p-6 text-white shadow-lg"
-          >
-            <div className="text-3xl mb-3">💡</div>
-            <h3 className="font-bold mb-2">Progress Tip</h3>
-            <p className="text-sm text-indigo-100">
-              Consistency is key! Try to complete at least 3 sessions per week for optimal recovery.
-            </p>
-          </motion.div>
-        </div>
+        {activeTab === 'recovery' && (
+          <div className="space-y-6">
+            <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm">
+              <h3 className="text-xl font-bold text-medical-text-primary mb-1">Recovery Chart</h3>
+              <p className="text-xs text-medical-text-secondary mb-4">Track baseline, max angle, and target over time.</p>
+              {historyLoading ? (
+                <div className="h-72 flex items-center justify-center text-sm text-gray-400">Loading recovery data...</div>
+              ) : trendData.length ? (
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={trendData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#EEF2F7" />
+                    <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                    <YAxis tick={{ fontSize: 11 }} />
+                    <Tooltip />
+                    <Legend />
+                    <Line type="monotone" dataKey="maxAngle" stroke="#0D9488" strokeWidth={3} dot={{ r: 3 }} name="Max Angle" />
+                    <Line type="monotone" dataKey="baseline" stroke="#F59E0B" strokeWidth={2} dot={false} name="Baseline" />
+                    {exerciseFilter !== 'all' && (
+                      <ReferenceLine y={exerciseLibrary.find((ex) => ex.id === exerciseFilter)?.targetAngle || 0} stroke="#0EA5E9" strokeDasharray="4 4" label="Target" />
+                    )}
+                  </LineChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-72 flex items-center justify-center text-sm text-gray-400">No sessions yet to plot.</div>
+              )}
+            </div>
+
+            <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm">
+              <h3 className="text-xl font-bold text-medical-text-primary mb-4">Exercise Recovery Comparison</h3>
+              {exerciseRecovery.length ? (
+                <ResponsiveContainer width="100%" height={260}>
+                  <BarChart data={exerciseRecovery}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#EEF2F7" />
+                    <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                    <YAxis tick={{ fontSize: 11 }} />
+                    <Tooltip />
+                    <Legend />
+                    <Bar dataKey="improvement" fill="#0D9488" name="Avg Improvement (deg)" radius={[6, 6, 0, 0]} />
+                    <Bar dataKey="posture" fill="#2563EB" name="Avg Posture (%)" radius={[6, 6, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="text-sm text-gray-400">No recovery metrics yet.</div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
-    </div>{/* end inner px wrapper */}
-
-    {/* Settings Modal */}
-    <AnimatePresence>
+      <AnimatePresence>
         {showSettingsModal && (
           <motion.div
             initial={{ opacity: 0 }}
@@ -662,7 +560,6 @@ const PatientDashboard = ({ user, onStartSession, onNavigate, onLogout }) => {
                 </button>
               </div>
 
-              {/* Current Mode Display */}
               <div className="mb-6 p-4 bg-gray-50 rounded-xl">
                 <h3 className="text-sm font-medium text-medical-text-secondary mb-2">Current Mode</h3>
                 <div className="flex items-center gap-2">
@@ -678,7 +575,6 @@ const PatientDashboard = ({ user, onStartSession, onNavigate, onLogout }) => {
                 )}
               </div>
 
-              {/* Switch Mode Section */}
               <div className="mb-6">
                 <h3 className="text-sm font-medium text-medical-text-secondary mb-3">Switch Mode</h3>
                 <p className="text-sm text-medical-text-secondary mb-4">
@@ -734,13 +630,11 @@ const PatientDashboard = ({ user, onStartSession, onNavigate, onLogout }) => {
                 </button>
               </div>
 
-              {/* Logout */}
               <div className="pt-4 border-t border-gray-200">
                 <button
                   onClick={() => {
                     setShowSettingsModal(false);
-                    if (onLogout) onLogout();
-                    else if (onNavigate) onNavigate('login');
+                    onLogout?.();
                   }}
                   className="w-full py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors font-medium"
                 >
@@ -750,8 +644,8 @@ const PatientDashboard = ({ user, onStartSession, onNavigate, onLogout }) => {
             </motion.div>
           </motion.div>
         )}
-    </AnimatePresence>
-  </div>
+      </AnimatePresence>
+    </div>
   );
 };
 

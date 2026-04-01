@@ -17,6 +17,10 @@ export const exerciseLibrary = [
     targetSets: 3,
     targetReps: 15,
     restBetweenSets: 60, // seconds
+
+    // Angle interpretation for this exercise.
+    // flexion_rom = 180 - inner knee angle, where higher means deeper bend.
+    angleMode: 'flexion_rom',
     
     // Instructions for the exercise
     instructions: [
@@ -60,10 +64,30 @@ export const exerciseLibrary = [
     
     // Rep detection parameters
     repDetection: {
-      flexionThreshold: 80, // Minimum angle to consider "flexed"
-      extensionThreshold: 30, // Maximum angle to return to for rep completion
-      minHoldTime: 1000, // Minimum hold time at peak (ms)
-      maxRepTime: 10000 // Maximum time for one rep (ms)
+      movementPattern: 'increase_then_decrease',
+      peakThreshold: 58,
+      resetThreshold: 20,
+      minPeakHoldTime: 250,
+      minRepInterval: 650
+    },
+
+    posture: {
+      minAngle: 10,
+      maxAngle: 150,
+      requireSymmetry: false,
+      maxSideDiff: 30
+    },
+
+    calibration: {
+      peakThreshold: 35,
+      resetThreshold: 15,
+      minPeakHoldTime: 250,
+      minRepInterval: 650
+    },
+
+    demo: {
+      type: 'animation',
+      key: 'knee-flexion'
     }
   },
   
@@ -80,6 +104,8 @@ export const exerciseLibrary = [
     targetSets: 3,
     targetReps: 15,
     restBetweenSets: 60,
+
+    angleMode: 'inner_knee_angle',
     
     instructions: [
       'Sit on a chair with feet flat on the ground',
@@ -117,10 +143,30 @@ export const exerciseLibrary = [
     ],
     
     repDetection: {
-      flexionThreshold: 90,
-      extensionThreshold: 160,
-      minHoldTime: 2000,
-      maxRepTime: 10000
+      movementPattern: 'increase_then_decrease',
+      peakThreshold: 160,
+      resetThreshold: 105,
+      minPeakHoldTime: 300,
+      minRepInterval: 700
+    },
+
+    posture: {
+      minAngle: 80,
+      maxAngle: 180,
+      requireSymmetry: false,
+      maxSideDiff: 35
+    },
+
+    calibration: {
+      peakThreshold: 145,
+      resetThreshold: 110,
+      minPeakHoldTime: 250,
+      minRepInterval: 700
+    },
+
+    demo: {
+      type: 'animation',
+      key: 'knee-extension'
     }
   },
   
@@ -137,6 +183,8 @@ export const exerciseLibrary = [
     targetSets: 3,
     targetReps: 12,
     restBetweenSets: 60,
+
+    angleMode: 'inner_knee_angle',
     
     instructions: [
       'Lie on your back with one leg bent and one straight',
@@ -173,10 +221,30 @@ export const exerciseLibrary = [
     ],
     
     repDetection: {
-      flexionThreshold: 30,
-      extensionThreshold: 10,
-      minHoldTime: 1500,
-      maxRepTime: 8000
+      movementPattern: 'increase_then_decrease',
+      peakThreshold: 168,
+      resetThreshold: 148,
+      minPeakHoldTime: 250,
+      minRepInterval: 750
+    },
+
+    posture: {
+      minAngle: 140,
+      maxAngle: 180,
+      requireSymmetry: false,
+      maxSideDiff: 40
+    },
+
+    calibration: {
+      peakThreshold: 162,
+      resetThreshold: 145,
+      minPeakHoldTime: 200,
+      minRepInterval: 700
+    },
+
+    demo: {
+      type: 'animation',
+      key: 'straight-leg-raise'
     }
   },
   
@@ -193,6 +261,8 @@ export const exerciseLibrary = [
     targetSets: 3,
     targetReps: 15,
     restBetweenSets: 60,
+
+    angleMode: 'flexion_rom',
     
     instructions: [
       'Stand with feet shoulder-width apart, toes slightly pointed out',
@@ -236,10 +306,30 @@ export const exerciseLibrary = [
     ],
     
     repDetection: {
-      flexionThreshold: 100, // Knee angle when squatting down (less than this = squat position)
-      extensionThreshold: 160, // Knee angle when standing (greater than this = standing)
-      minHoldTime: 500, // Brief pause at bottom (ms)
-      maxRepTime: 8000 // Maximum time for one rep (ms)
+      movementPattern: 'increase_then_decrease',
+      peakThreshold: 70,
+      resetThreshold: 22,
+      minPeakHoldTime: 220,
+      minRepInterval: 650
+    },
+
+    posture: {
+      minAngle: 15,
+      maxAngle: 120,
+      requireSymmetry: true,
+      maxSideDiff: 18
+    },
+
+    calibration: {
+      peakThreshold: 35,
+      resetThreshold: 18,
+      minPeakHoldTime: 220,
+      minRepInterval: 650
+    },
+
+    demo: {
+      type: 'animation',
+      key: 'bodyweight-squats'
     }
   }
 ];
