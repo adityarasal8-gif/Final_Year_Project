@@ -248,7 +248,14 @@ export const getUserSessions = async (userId, limitCount = 30) => {
     const merged = mergeSessionsById(
       [...userIdSessions, ...legacyUidSessions, ...legacyPatientIdSessions],
       localSessions
-    );
+    ).map(session => ({
+      ...session,
+      baselineProfile: session.baselineProfile || null,
+      stageDecision: session.stageDecision || 'Unknown',
+      stageScore: session.stageScore !== undefined ? session.stageScore : null,
+      decisionBreakdown: session.decisionBreakdown || session.stageDecisionBreakdown || null
+    }));
+
     return { success: true, data: sortSessions(merged, 'desc').slice(0, effectiveLimit) };
   } catch (error) {
     console.error('Error getting sessions:', error);
@@ -268,7 +275,18 @@ export const getSession = async (sessionId) => {
     const docSnap = await getDoc(docRef);
     
     if (docSnap.exists()) {
-      return { success: true, data: { id: docSnap.id, ...docSnap.data() } };
+      const data = docSnap.data();
+      return { 
+        success: true, 
+        data: { 
+          id: docSnap.id, 
+          ...data,
+          baselineProfile: data.baselineProfile || null,
+          stageDecision: data.stageDecision || 'Unknown',
+          stageScore: data.stageScore !== undefined ? data.stageScore : null,
+          decisionBreakdown: data.decisionBreakdown || data.stageDecisionBreakdown || null
+        } 
+      };
     } else {
       return { success: false, error: 'Session not found' };
     }

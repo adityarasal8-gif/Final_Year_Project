@@ -40,11 +40,74 @@ const PlayIcon = ({ className }) => (
   </svg>
 );
 
+const getYouTubeEmbedData = (urlString) => {
+  try {
+    const parsed = new URL(urlString);
+    const host = parsed.hostname.replace('www.', '');
+    let videoId = null;
+
+    if (host === 'youtu.be') {
+      videoId = parsed.pathname.split('/').filter(Boolean)[0] || null;
+    } else if (host === 'youtube.com' || host === 'm.youtube.com') {
+      if (parsed.pathname === '/watch') {
+        videoId = parsed.searchParams.get('v');
+      } else if (parsed.pathname.startsWith('/embed/')) {
+        videoId = parsed.pathname.split('/')[2] || null;
+      } else if (parsed.pathname.startsWith('/shorts/')) {
+        videoId = parsed.pathname.split('/')[2] || null;
+      }
+    }
+
+    if (!videoId) return null;
+
+    return {
+      embedUrl: `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0`,
+      thumbnailUrl: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`
+    };
+  } catch {
+    return null;
+  }
+};
+
+const resolveDemoMedia = (rawUrl) => {
+  const normalized = typeof rawUrl === 'string' ? rawUrl.trim() : '';
+  if (!normalized) return { kind: 'none' };
+
+  const youtubeData = getYouTubeEmbedData(normalized);
+  if (youtubeData) {
+    return {
+      kind: 'youtube',
+      url: normalized,
+      ...youtubeData
+    };
+  }
+
+  const isDirectVideo = /\.(mp4|webm|ogg)(\?.*)?$/i.test(normalized);
+  if (isDirectVideo) {
+    return {
+      kind: 'direct',
+      url: normalized
+    };
+  }
+
+  return {
+    kind: 'external',
+    url: normalized
+  };
+};
+
+const getLegOptions = () => [
+  { value: 'left', label: 'Left Leg' },
+  { value: 'right', label: 'Right Leg' },
+  { value: 'both', label: 'Both Legs' }
+];
+
 const ExerciseDemo = ({ exercise, onStart, onBack }) => {
   const setupItems = exercise?.setup || [];
   const instructions = exercise?.instructions || [];
   const commonMistakes = exercise?.commonMistakes || [];
   const safetyTips = exercise?.safetyTips || [];
+  const cameraGuide = exercise?.cameraGuide || {};
 
   const [checklist, setChecklist] = useState(
     setupItems.map((item, idx) => ({
@@ -56,6 +119,10 @@ const ExerciseDemo = ({ exercise, onStart, onBack }) => {
   const [showVideoModal, setShowVideoModal] = useState(false);
   const [selectedLeg, setSelectedLeg] = useState(exercise.legSide || 'left');
 
+  const demoMedia = resolveDemoMedia(exercise?.demo?.videoUrl);
+  const legOptions = getLegOptions();
+  const hasAnyDemoLink = demoMedia.kind !== 'none';
+
   const allChecked = checklist.every((item) => item.checked);
 
   const toggleCheckItem = (index) => {
@@ -64,8 +131,24 @@ const ExerciseDemo = ({ exercise, onStart, onBack }) => {
     );
   };
 
+  const toggleAllChecklist = () => {
+    const shouldCheckAll = !allChecked;
+    setChecklist((prev) => prev.map((item) => ({ ...item, checked: shouldCheckAll })));
+  };
+
   const handleStartExercise = () => {
     onStart(selectedLeg);
+  };
+
+  const handleDemoPreviewClick = () => {
+    if (!hasAnyDemoLink) return;
+
+    if (demoMedia.kind === 'external') {
+      window.open(demoMedia.url, '_blank', 'noopener,noreferrer');
+      return;
+    }
+
+    setShowVideoModal(true);
   };
 
   return (
@@ -83,7 +166,7 @@ const ExerciseDemo = ({ exercise, onStart, onBack }) => {
           <div className="flex items-start justify-between">
             <div className="flex-1">
               <span className="inline-block px-3 py-1 bg-white/20 backdrop-blur-sm rounded-full text-sm font-medium mb-3">
-                {exercise.difficulty} - {exercise.duration}
+                {exercise.category} - {exercise.difficulty} - {exercise.duration}
               </span>
               <h1 className="text-4xl font-bold mb-3">{exercise.name}</h1>
               <p className="text-xl text-teal-50 mb-4">{exercise.description}</p>
@@ -95,7 +178,7 @@ const ExerciseDemo = ({ exercise, onStart, onBack }) => {
                 ))}
               </div>
             </div>
-            <div className="text-sm font-bold bg-white/20 px-4 py-2 rounded-lg">DEMO</div>
+            <div className="text-sm font-bold bg-white/20 px-4 py-2 rounded-lg">Ready to Practice</div>
           </div>
         </div>
       </div>
@@ -108,24 +191,63 @@ const ExerciseDemo = ({ exercise, onStart, onBack }) => {
               animate={{ opacity: 1, y: 0 }}
               className="bg-white rounded-2xl p-6 shadow-md"
             >
-              <div className="aspect-video bg-gray-100 border border-gray-200 rounded-xl flex flex-col items-center justify-center mb-4 text-gray-500">
-                <VideoIcon className="w-14 h-14 mb-2" />
-                <p className="text-sm font-semibold">Exercise Demo Placeholder</p>
-                <p className="text-xs text-gray-400 mt-1">Video preview will appear here.</p>
-              </div>
+              <h2 className="text-xl font-bold text-medical-text-primary mb-4">Exercise Demo</h2>
+              <motion.button
+                type="button"
+                whileHover={hasAnyDemoLink ? { scale: 1.01 } : undefined}
+                whileTap={hasAnyDemoLink ? { scale: 0.99 } : undefined}
+                onClick={handleDemoPreviewClick}
+                disabled={!hasAnyDemoLink}
+                className={`w-full aspect-video border rounded-xl mb-4 overflow-hidden relative ${
+                  hasAnyDemoLink
+                    ? 'cursor-pointer border-teal-200 shadow-md hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-teal-500'
+                    : 'border-gray-200 bg-gray-100 cursor-not-allowed'
+                }`}
+              >
+                {demoMedia.kind === 'youtube' && (
+                  <>
+                    <img
+                      src={demoMedia.thumbnailUrl}
+                      alt={`${exercise.name} demo preview`}
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute inset-0 bg-black/35 flex items-center justify-center">
+                      <div className="w-16 h-16 bg-white/90 rounded-full flex items-center justify-center shadow-lg">
+                        <PlayIcon className="w-8 h-8 text-teal-700 ml-0.5" />
+                      </div>
+                    </div>
+                  </>
+                )}
 
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-xs text-slate-600 font-medium">
-                  Demo video is currently a placeholder.
-                </p>
-                <button
-                  onClick={() => setShowVideoModal(true)}
-                  className="px-4 py-2 bg-teal-50 text-teal-700 hover:bg-teal-100 rounded-lg font-semibold transition-colors flex items-center justify-center gap-2 text-sm"
-                >
-                  <VideoIcon className="w-4 h-4" />
-                  Open Placeholder
-                </button>
-              </div>
+                {demoMedia.kind === 'direct' && (
+                  <div className="w-full h-full bg-gradient-to-br from-slate-900 via-slate-800 to-slate-700 text-white flex flex-col items-center justify-center">
+                    <div className="w-16 h-16 bg-white/15 rounded-full flex items-center justify-center mb-3">
+                      <PlayIcon className="w-8 h-8 text-white ml-0.5" />
+                    </div>
+                    <p className="text-sm font-semibold">Tap to play demo video</p>
+                  </div>
+                )}
+
+                {demoMedia.kind === 'external' && (
+                  <div className="w-full h-full bg-gradient-to-br from-cyan-50 to-teal-50 text-teal-900 flex flex-col items-center justify-center p-4">
+                    <VideoIcon className="w-12 h-12 mb-2" />
+                    <p className="text-sm font-semibold text-center">Tap to open demo video</p>
+                  </div>
+                )}
+
+                {demoMedia.kind === 'none' && (
+                  <div className="w-full h-full text-gray-500 flex flex-col items-center justify-center p-4">
+                    <VideoIcon className="w-14 h-14 mb-2" />
+                    <p className="text-sm font-semibold">Demo preview not available yet</p>
+                  </div>
+                )}
+              </motion.button>
+
+              <p className="text-xs text-slate-600 font-medium">
+                {hasAnyDemoLink
+                  ? 'Tap the demo screen to start the video.'
+                  : 'Add exercise.demo.videoUrl in exercises.js to enable this preview.'}
+              </p>
             </motion.div>
 
             <motion.div
@@ -182,9 +304,18 @@ const ExerciseDemo = ({ exercise, onStart, onBack }) => {
               transition={{ delay: 0.1 }}
               className="bg-white rounded-2xl p-6 shadow-md"
             >
-              <h2 className="text-xl font-bold text-medical-text-primary mb-4">
-                Preparation Checklist
-              </h2>
+              <div className="flex items-center justify-between gap-3 mb-4">
+                <h2 className="text-xl font-bold text-medical-text-primary">
+                  Preparation Checklist
+                </h2>
+                <button
+                  type="button"
+                  onClick={toggleAllChecklist}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-teal-200 text-teal-700 bg-teal-50 hover:bg-teal-100 transition-colors"
+                >
+                  {allChecked ? 'Clear All' : 'Check All'}
+                </button>
+              </div>
               <div className="space-y-3">
                 {checklist.map((item, index) => (
                   <label
@@ -231,37 +362,30 @@ const ExerciseDemo = ({ exercise, onStart, onBack }) => {
               className="bg-gradient-to-br from-cyan-50 to-teal-50 border-2 border-teal-200 rounded-2xl p-6 shadow-md"
             >
               <h2 className="text-xl font-bold text-medical-text-primary mb-4">
-                Select Leg to Exercise
+                Select Movement Side
               </h2>
-              <div className="grid grid-cols-2 gap-4">
-                <button
-                  onClick={() => setSelectedLeg('left')}
-                  className={`p-6 rounded-xl border-2 transition-all transform hover:scale-105 ${
-                    selectedLeg === 'left'
-                      ? 'bg-teal-600 border-teal-700 text-white shadow-lg'
-                      : 'bg-white border-gray-300 text-gray-700 hover:border-teal-400'
-                  }`}
-                >
-                  <div className={`font-bold text-lg ${selectedLeg === 'left' ? 'text-white' : 'text-gray-900'}`}>
-                    Left Leg
-                  </div>
-                </button>
-                <button
-                  onClick={() => setSelectedLeg('right')}
-                  className={`p-6 rounded-xl border-2 transition-all transform hover:scale-105 ${
-                    selectedLeg === 'right'
-                      ? 'bg-teal-600 border-teal-700 text-white shadow-lg'
-                      : 'bg-white border-gray-300 text-gray-700 hover:border-teal-400'
-                  }`}
-                >
-                  <div className={`font-bold text-lg ${selectedLeg === 'right' ? 'text-white' : 'text-gray-900'}`}>
-                    Right Leg
-                  </div>
-                </button>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {legOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    onClick={() => setSelectedLeg(option.value)}
+                    className={`p-6 rounded-xl border-2 transition-all transform hover:scale-105 ${
+                      selectedLeg === option.value
+                        ? 'bg-teal-600 border-teal-700 text-white shadow-lg'
+                        : 'bg-white border-gray-300 text-gray-700 hover:border-teal-400'
+                    }`}
+                  >
+                    <div className={`font-bold text-lg ${selectedLeg === option.value ? 'text-white' : 'text-gray-900'}`}>
+                      {option.label}
+                    </div>
+                  </button>
+                ))}
               </div>
               <div className="mt-4 p-3 bg-cyan-100 rounded-lg">
                 <p className="text-sm text-cyan-900">
-                  <span className="font-semibold">Tip:</span> Keep the entire {selectedLeg} leg visible from hip to ankle.
+                  <span className="font-semibold">Tip:</span> {selectedLeg === 'both'
+                    ? 'Keep both legs fully visible from hip to ankle.'
+                    : `Keep the entire ${selectedLeg} leg visible from hip to ankle.`}
                 </p>
               </div>
             </motion.div>
@@ -279,19 +403,19 @@ const ExerciseDemo = ({ exercise, onStart, onBack }) => {
               <div className="space-y-3 text-sm">
                 <div className="flex justify-between p-3 bg-gray-50 rounded-lg">
                   <span className="text-gray-600">Distance:</span>
-                  <span className="font-semibold text-gray-900">{exercise.cameraGuide.distance}</span>
+                  <span className="font-semibold text-gray-900">{cameraGuide.distance || '2-3 meters'}</span>
                 </div>
                 <div className="flex justify-between p-3 bg-gray-50 rounded-lg">
                   <span className="text-gray-600">Angle:</span>
-                  <span className="font-semibold text-gray-900">{exercise.cameraGuide.angle}</span>
+                  <span className="font-semibold text-gray-900">{cameraGuide.angle || 'Side view'}</span>
                 </div>
                 <div className="flex justify-between p-3 bg-gray-50 rounded-lg">
                   <span className="text-gray-600">Height:</span>
-                  <span className="font-semibold text-gray-900">{exercise.cameraGuide.height}</span>
+                  <span className="font-semibold text-gray-900">{cameraGuide.height || 'Knee level'}</span>
                 </div>
                 <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
                   <p className="text-sm text-blue-900">
-                    Tip: {exercise.cameraGuide.instructions}
+                    Tip: {cameraGuide.instructions || 'Keep your full movement visible in frame during all reps.'}
                   </p>
                 </div>
               </div>
@@ -359,7 +483,9 @@ const ExerciseDemo = ({ exercise, onStart, onBack }) => {
               }`}
             >
               <PlayIcon className="w-6 h-6" />
-              {allChecked ? `Start Exercise - ${selectedLeg.charAt(0).toUpperCase() + selectedLeg.slice(1)} Leg` : 'Complete Checklist First'}
+              {allChecked
+                ? `Start Exercise - ${selectedLeg === 'both' ? 'Both Legs' : `${selectedLeg.charAt(0).toUpperCase() + selectedLeg.slice(1)} Leg`}`
+                : 'Complete Checklist First'}
             </motion.button>
           </div>
         </div>
@@ -381,11 +507,46 @@ const ExerciseDemo = ({ exercise, onStart, onBack }) => {
               className="bg-white rounded-2xl p-4 max-w-3xl w-full"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="aspect-video bg-gray-100 border border-gray-200 rounded-xl flex flex-col items-center justify-center text-gray-500">
-                <VideoIcon className="w-16 h-16 mb-3" />
-                <p className="font-semibold text-gray-700">Demo Placeholder</p>
-                <p className="text-sm text-gray-500 mt-1">Full exercise demo video will be added here.</p>
-              </div>
+              {demoMedia.kind === 'youtube' ? (
+                <div className="aspect-video bg-black border border-gray-200 rounded-xl overflow-hidden">
+                  <iframe
+                    title={`${exercise.name} demo video`}
+                    src={demoMedia.embedUrl}
+                    className="w-full h-full"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                    allowFullScreen
+                  />
+                </div>
+              ) : demoMedia.kind === 'direct' ? (
+                <div className="aspect-video bg-black border border-gray-200 rounded-xl overflow-hidden">
+                  <video
+                    className="w-full h-full"
+                    src={demoMedia.url}
+                    controls
+                    autoPlay
+                  />
+                </div>
+              ) : demoMedia.kind === 'external' ? (
+                <div className="aspect-video bg-gray-100 border border-gray-200 rounded-xl flex flex-col items-center justify-center text-gray-600 p-6 text-center">
+                  <VideoIcon className="w-14 h-14 mb-3" />
+                  <p className="font-semibold text-gray-700">External Demo Link</p>
+                  <p className="text-sm text-gray-500 mt-1">This link cannot be embedded automatically.</p>
+                  <a
+                    href={demoMedia.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-4 px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg font-semibold transition-colors"
+                  >
+                    Open Video Link
+                  </a>
+                </div>
+              ) : (
+                <div className="aspect-video bg-gray-100 border border-gray-200 rounded-xl flex flex-col items-center justify-center text-gray-500">
+                  <VideoIcon className="w-16 h-16 mb-3" />
+                  <p className="font-semibold text-gray-700">Demo Placeholder</p>
+                  <p className="text-sm text-gray-500 mt-1">Add exercise.demo.videoUrl in exercises.js for this exercise.</p>
+                </div>
+              )}
               <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-2">
                 {instructions.slice(0, 3).map((step, idx) => (
                   <div key={idx} className="p-3 bg-slate-50 rounded-lg text-sm text-slate-700">

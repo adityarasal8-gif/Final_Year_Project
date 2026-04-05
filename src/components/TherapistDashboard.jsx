@@ -93,6 +93,15 @@ const formatDate = (timestamp) => {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 };
 
+const toTimestampMs = (timestamp) => {
+  if (!timestamp) return 0;
+  if (timestamp?.toDate) return timestamp.toDate().getTime();
+  if (typeof timestamp?.seconds === 'number') return timestamp.seconds * 1000;
+
+  const parsed = new Date(timestamp);
+  return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+};
+
 const formatSessionData = (sessions) => {
   return sessions.map((session) => ({
     id: session.id,
@@ -102,8 +111,9 @@ const formatSessionData = (sessions) => {
     maxAngle: Math.round(session.maxAngle || 0),
     reps: session.reps ?? session.totalReps ?? 0,
     postureAccuracy: Math.round(session.postureAccuracy || 0),
-    improvement: Math.round(session.improvement ?? ((session.maxAngle || 0) - (session.baselineROM || 0))),
-    createdAt: session.createdAt
+    improvement: Math.round(session.improvementDeg ?? session.improvement ?? ((session.maxAngle || 0) - (session.baselineROM || 0))),
+    createdAt: session.createdAt,
+    createdAtMs: toTimestampMs(session.createdAt)
   }));
 };
 
@@ -232,14 +242,14 @@ const TherapistDashboard = ({ user, onLogout }) => {
       if (user?.isDemo) {
         const { sessions } = generateDemoData();
         const filtered = sessions.filter((s) => s.userId === selectedPatient.id);
-        setSessionHistory(formatSessionData(filtered));
+        setSessionHistory(formatSessionData(filtered).sort((a, b) => a.createdAtMs - b.createdAtMs));
         setComplianceData({ completedSessions: 4, assignedSessions: 5, complianceScore: 80 });
         return;
       }
 
       const historyResult = await getPatientSessionHistory(selectedPatient.id, timeRange);
       if (historyResult.success) {
-        setSessionHistory(formatSessionData(historyResult.data));
+        setSessionHistory(formatSessionData(historyResult.data).sort((a, b) => a.createdAtMs - b.createdAtMs));
       } else {
         setSessionHistory([]);
       }

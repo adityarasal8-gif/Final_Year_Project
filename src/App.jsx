@@ -120,7 +120,7 @@ function App() {
    */
   const handleStartSession = (exercise, leg) => {
     setSelectedExercise(exercise);
-    setSelectedLeg(leg || 'left');
+    setSelectedLeg(leg || exercise?.legSide || 'left');
     setCurrentView('exercise');
   };
 
@@ -134,6 +134,7 @@ function App() {
         const firestoreData = {
           exerciseId: selectedExercise?.id || 'unknown',
           exerciseName: selectedExercise?.name || 'Unknown Exercise',
+          angleMode: selectedExercise?.angleMode || 'inner_knee_angle',
           legSide: selectedLeg,
           totalReps: completedSessionData.totalReps || 0,
           reps: completedSessionData.totalReps || 0,
@@ -143,10 +144,18 @@ function App() {
           targetAngle: selectedExercise?.targetAngle || 0,
           maxAngle: completedSessionData.bestAngle || 0,
           baselineROM: completedSessionData.baselineROM || 0,
-          improvement: completedSessionData.improvement || 0,
+          romGainDeg: Math.round((completedSessionData.bestAngle || 0) - (completedSessionData.baselineROM || 0)),
+          improvement: completedSessionData.improvementDeg ?? completedSessionData.improvement ?? 0,
+          improvementDeg: completedSessionData.improvementDeg ?? completedSessionData.improvement ?? 0,
+          improvementPercent: completedSessionData.improvementPercent ?? 0,
           postureAccuracy: completedSessionData.postureAccuracy || 0,
           duration: completedSessionData.duration || 0,
           therapistId: user.therapistId || null,
+          baselineProfile: completedSessionData.baselineProfile || null,
+          sessionMetrics: completedSessionData.sessionMetrics || null,
+          stageScore: completedSessionData.stageScore || 0,
+          stageDecision: completedSessionData.stageDecision || 'Unknown',
+          decisionBreakdown: completedSessionData.decisionBreakdown || completedSessionData.stageDecisionBreakdown || null,
         };
         const result = await saveSession(user.uid, firestoreData);
         if (result.success) {

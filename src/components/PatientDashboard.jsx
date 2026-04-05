@@ -11,6 +11,7 @@ import {
   getUserSessions
 } from '../utils/firestore';
 import { exerciseLibrary } from '../data/exercises';
+import { mapRecoverySession, calculateMedian } from '../utils/recoveryMetrics';
 import ExerciseDemo from './ExerciseDemo';
 import PhysioLogo from './PhysioLogo';
 import {
@@ -56,14 +57,6 @@ const TabButton = ({ active, label, onClick }) => (
   </button>
 );
 
-const toDateLabel = (date) => date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-
-const toDateKey = (date) => {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d.toISOString().slice(0, 10);
-};
-
 const getStreak = (records) => {
   if (!records.length) return 0;
 
@@ -83,42 +76,6 @@ const getStreak = (records) => {
 
   return streak;
 };
-
-const mapSession = (session) => {
-  let sessionDate = new Date();
-  if (session?.createdAt?.toDate) {
-    sessionDate = session.createdAt.toDate();
-  } else if (typeof session?.createdAt?.seconds === 'number') {
-    sessionDate = new Date(session.createdAt.seconds * 1000);
-  } else if (typeof session?.createdAt === 'string' || typeof session?.createdAt === 'number') {
-    const parsed = new Date(session.createdAt);
-    if (!Number.isNaN(parsed.getTime())) {
-      sessionDate = parsed;
-    }
-  }
-
-  const fallbackImprovement = (session.maxAngle || 0) - (session.baselineROM || 0);
-
-  return {
-    id: session.id,
-    exerciseId: session.exerciseId || 'unknown',
-    exerciseName: session.exerciseName || 'Exercise',
-    dateLabel: toDateLabel(sessionDate),
-    dateKey: toDateKey(sessionDate),
-    createdAtMs: sessionDate.getTime(),
-    totalReps: session.totalReps ?? session.reps ?? 0,
-    maxAngle: Math.round(session.maxAngle || 0),
-    baselineROM: Math.round(session.baselineROM || 0),
-    targetAngle: Math.round(session.targetAngle || 0),
-    targetReps: session.targetReps || 0,
-    targetSets: session.targetSets || 0,
-    sets: session.sets || 1,
-    durationMin: Math.max(1, Math.round((session.duration || 0) / 60)),
-    improvementDeg: Math.round(session.improvement ?? fallbackImprovement),
-    postureAccuracy: Math.round(session.postureAccuracy || 0)
-  };
-};
-
 const PatientDashboard = ({ user, onStartSession, onLogout }) => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [exerciseFilter, setExerciseFilter] = useState('all');
@@ -142,7 +99,7 @@ const PatientDashboard = ({ user, onStartSession, onLogout }) => {
           { id: 'd3', exerciseId: 'knee-extension', exerciseName: 'Knee Extension', createdAt: '2026-03-24', maxAngle: 164, baselineROM: 142, targetAngle: 180, totalReps: 31, duration: 720, improvement: 10, postureAccuracy: 85 },
           { id: 'd4', exerciseId: 'bodyweight-squats', exerciseName: 'Bodyweight Squats', createdAt: '2026-03-21', maxAngle: 82, baselineROM: 48, targetAngle: 90, totalReps: 45, duration: 930, improvement: 14, postureAccuracy: 80 }
         ];
-        setSessionHistory(demo.map(mapSession).sort((a, b) => b.createdAtMs - a.createdAtMs));
+        setSessionHistory(demo.map(mapRecoverySession).sort((a, b) => b.createdAtMs - a.createdAtMs));
         setHistoryLoading(false);
         return;
       }
@@ -151,7 +108,7 @@ const PatientDashboard = ({ user, onStartSession, onLogout }) => {
       try {
         const result = await getUserSessions(user.uid, 100);
         if (result.success) {
-          const mapped = result.data.map(mapSession).sort((a, b) => b.createdAtMs - a.createdAtMs);
+          const mapped = result.data.map(mapRecoverySession).sort((a, b) => b.createdAtMs - a.createdAtMs);
           setSessionHistory(mapped);
         }
       } catch (err) {
@@ -169,62 +126,143 @@ const PatientDashboard = ({ user, onStartSession, onLogout }) => {
     return sessionHistory.filter((s) => s.exerciseId === exerciseFilter);
   }, [exerciseFilter, sessionHistory]);
 
+  const chartableHistory = useMemo(() => {
+    return filteredHistory.filter((session) => session.isChartable);
+  }, [filteredHistory]);
+
+  const plotHistory = useMemo(() => {
+    if (chartableHistory.length) {
+      return chartableHistory;
+    }
+
+    return filteredHistory.filter((session) => Number.isFinite(session.maxAngle) && session.maxAngle > 0);
+  }, [chartableHistory, filteredHistory]);
+
   const stats = useMemo(() => {
     if (!filteredHistory.length) {
       return {
         totalSessions: 0,
+        usableSessions: 0,
         weekStreak: 0,
-        avgImprovement: 0,
+        avgROMGain: 0,
+        avgProgress: 0,
         nextGoal: 0,
         avgPosture: 0
       };
     }
 
-    const latest = filteredHistory[0];
+    const source = chartableHistory.length ? chartableHistory : filteredHistory;
+    const latest = source[0] || filteredHistory[0];
     const totalSessions = filteredHistory.length;
-    const weekStreak = getStreak(filteredHistory);
-    const avgImprovement = Math.round(filteredHistory.reduce((sum, s) => sum + (s.improvementDeg || 0), 0) / filteredHistory.length);
-    const avgPosture = Math.round(filteredHistory.reduce((sum, s) => sum + (s.postureAccuracy || 0), 0) / filteredHistory.length);
+    const weekStreak = getStreak(source);
+    const usableSessions = chartableHistory.length;
+    const avgROMGain = Math.round(source.reduce((sum, s) => sum + (s.romGainDeg || 0), 0) / source.length);
+    const avgProgress = Math.round(source.reduce((sum, s) => sum + (s.improvementPercent || 0), 0) / source.length);
+    const avgPosture = Math.round(source.reduce((sum, s) => sum + (s.postureAccuracy || 0), 0) / source.length);
 
     let nextGoal = 0;
     if (exerciseFilter !== 'all') {
       const exerciseTarget = exerciseLibrary.find((e) => e.id === exerciseFilter)?.targetAngle || latest.targetAngle || 0;
       nextGoal = latest.maxAngle >= exerciseTarget ? Math.min(180, exerciseTarget + 5) : exerciseTarget;
     } else {
-      const maxAngle = Math.max(...filteredHistory.map((s) => s.maxAngle || 0));
+      const maxAngle = Math.max(...source.map((s) => s.maxAngle || 0));
       nextGoal = Math.min(180, maxAngle + 5);
     }
 
-    return { totalSessions, weekStreak, avgImprovement, nextGoal, avgPosture };
-  }, [exerciseFilter, filteredHistory]);
+    return { totalSessions, usableSessions, weekStreak, avgROMGain, avgProgress, nextGoal, avgPosture };
+  }, [chartableHistory, exerciseFilter, filteredHistory]);
 
   const trendData = useMemo(() => {
-    return [...filteredHistory]
+    const sorted = [...plotHistory]
       .sort((a, b) => a.createdAtMs - b.createdAtMs)
       .map((s, idx) => ({
-        i: idx + 1,
-        label: s.dateLabel,
-        maxAngle: s.maxAngle,
-        baseline: s.baselineROM,
-        target: s.targetAngle || null,
-        posture: s.postureAccuracy
+        ...s,
+        i: idx + 1
       }));
-  }, [filteredHistory]);
+
+    const sessionsPerDay = {};
+    return sorted.map((session) => {
+      const nextIndex = (sessionsPerDay[session.dateKey] || 0) + 1;
+      sessionsPerDay[session.dateKey] = nextIndex;
+
+      return {
+        i: session.i,
+        label: nextIndex > 1 ? `${session.dateLabel} (${nextIndex})` : session.dateLabel,
+        maxAngle: session.maxAngle,
+        baseline: session.baselineROM,
+        target: session.targetAngle || null,
+        romGain: session.romGainDeg,
+        progressPercent: session.hasProgressMetric ? session.improvementPercent : null,
+        posture: session.postureAccuracy
+      };
+    });
+  }, [plotHistory]);
+
+  const chartReferences = useMemo(() => {
+    if (exerciseFilter === 'all' || !plotHistory.length) {
+      return { baselineRef: null, targetRef: null, yMax: 120 };
+    }
+
+    const baselineValues = plotHistory.map((s) => s.baselineROM).filter((v) => Number.isFinite(v));
+    const targetValues = plotHistory.map((s) => s.targetAngle).filter((v) => Number.isFinite(v));
+    const maxValues = plotHistory.map((s) => s.maxAngle).filter((v) => Number.isFinite(v));
+
+    const baselineRef = calculateMedian(baselineValues);
+    const configuredTarget = exerciseLibrary.find((exercise) => exercise.id === exerciseFilter)?.targetAngle;
+    const targetRef = Number.isFinite(configuredTarget) ? configuredTarget : calculateMedian(targetValues);
+
+    const ceiling = Math.max(
+      ...(maxValues.length ? maxValues : [0]),
+      Number.isFinite(targetRef) ? targetRef : 0,
+      Number.isFinite(baselineRef) ? baselineRef : 0
+    );
+
+    return {
+      baselineRef: Number.isFinite(baselineRef) ? Math.round(baselineRef) : null,
+      targetRef: Number.isFinite(targetRef) ? Math.round(targetRef) : null,
+      yMax: Math.min(180, Math.max(100, Math.round(ceiling + 10)))
+    };
+  }, [exerciseFilter, plotHistory]);
+
+  const recoveryDiagnostics = useMemo(() => {
+    const legacyAdjustedCount = filteredHistory.filter((session) => session.legacyAngleAdjusted).length;
+    const anomalyCount = filteredHistory.filter((session) => session.calibrationAnomaly).length;
+
+    return {
+      total: filteredHistory.length,
+      chartable: chartableHistory.length,
+      plotted: plotHistory.length,
+      excluded: Math.max(0, filteredHistory.length - chartableHistory.length),
+      legacyAdjustedCount,
+      anomalyCount
+    };
+  }, [chartableHistory.length, filteredHistory, plotHistory.length]);
 
   const exerciseRecovery = useMemo(() => {
+    const source = sessionHistory.filter((session) => session.isChartable);
     const grouped = {};
-    sessionHistory.forEach((s) => {
+
+    source.forEach((s) => {
       if (!grouped[s.exerciseId]) {
-        grouped[s.exerciseId] = { name: s.exerciseName, sessions: 0, totalImprovement: 0, totalPosture: 0 };
+        grouped[s.exerciseId] = {
+          name: s.exerciseName,
+          sessions: 0,
+          totalProgress: 0,
+          totalROMGain: 0,
+          totalPosture: 0
+        };
       }
+
       grouped[s.exerciseId].sessions += 1;
-      grouped[s.exerciseId].totalImprovement += s.improvementDeg || 0;
+      grouped[s.exerciseId].totalProgress += s.improvementPercent || 0;
+      grouped[s.exerciseId].totalROMGain += s.romGainDeg || 0;
       grouped[s.exerciseId].totalPosture += s.postureAccuracy || 0;
     });
 
     return Object.values(grouped).map((g) => ({
       name: g.name,
-      improvement: Math.round(g.totalImprovement / Math.max(1, g.sessions)),
+      progress: Math.round(g.totalProgress / Math.max(1, g.sessions)),
+      romGain: Math.round(g.totalROMGain / Math.max(1, g.sessions)),
       posture: Math.round(g.totalPosture / Math.max(1, g.sessions)),
       sessions: g.sessions
     }));
@@ -350,7 +388,7 @@ const PatientDashboard = ({ user, onStartSession, onLogout }) => {
               ))}
             </select>
             <span className="text-xs text-gray-500">
-              Showing {filteredHistory.length} session{filteredHistory.length === 1 ? '' : 's'}
+              Showing {filteredHistory.length} session{filteredHistory.length === 1 ? '' : 's'} - {recoveryDiagnostics.plotted} usable for plotting
             </span>
           </div>
         )}
@@ -361,8 +399,8 @@ const PatientDashboard = ({ user, onStartSession, onLogout }) => {
               {[
                 { label: 'Total Sessions', value: stats.totalSessions },
                 { label: 'Streak', value: `${stats.weekStreak} day${stats.weekStreak === 1 ? '' : 's'}` },
-                { label: 'Avg Improvement', value: `${stats.avgImprovement} deg` },
-                { label: 'Next Goal', value: `${stats.nextGoal} deg` },
+                { label: 'Avg ROM Gain', value: `${stats.avgROMGain} deg` },
+                { label: 'Avg Progress', value: `${stats.avgProgress}%` },
                 { label: 'Posture Score', value: `${stats.avgPosture}%` }
               ].map((card) => (
                 <div key={card.label} className="bg-white rounded-2xl p-5 border border-gray-200 shadow-sm">
@@ -375,7 +413,7 @@ const PatientDashboard = ({ user, onStartSession, onLogout }) => {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm">
                 <h3 className="text-lg font-bold text-medical-text-primary mb-1">Recovery Trend</h3>
-                <p className="text-xs text-medical-text-secondary mb-4">Max angle progression across sessions</p>
+                <p className="text-xs text-medical-text-secondary mb-4">Validated max-angle trend from chartable sessions</p>
                 {historyLoading ? (
                   <div className="h-56 flex items-center justify-center text-sm text-gray-400">Loading...</div>
                 ) : trendData.length ? (
@@ -406,7 +444,7 @@ const PatientDashboard = ({ user, onStartSession, onLogout }) => {
                           <span className="text-teal-600">{session.maxAngle} deg</span>
                         </div>
                         <div className="text-xs text-gray-500 mt-1">
-                          {session.totalReps} reps - {session.durationMin} min - posture {session.postureAccuracy}%
+                          {session.totalReps} reps - {session.durationMin} min - ROM gain {session.romGainDeg} deg - posture {session.postureAccuracy}%
                         </div>
                       </div>
                     ))}
@@ -420,28 +458,57 @@ const PatientDashboard = ({ user, onStartSession, onLogout }) => {
         )}
 
         {activeTab === 'exercises' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             {exerciseLibrary.map((exercise) => (
               <motion.button
                 key={exercise.id}
                 onClick={() => handleExerciseSelect(exercise)}
                 whileHover={{ scale: 1.01 }}
                 whileTap={{ scale: 0.99 }}
-                className="text-left bg-white border border-gray-200 rounded-2xl p-5 shadow-sm hover:border-teal-400"
+                className="text-left bg-white border border-gray-200 rounded-2xl p-5 shadow-sm hover:border-teal-400 hover:shadow-md transition-all"
               >
-                <div className="flex justify-between items-start">
+                <div className="flex justify-between items-start gap-4">
                   <div>
                     <h3 className="text-lg font-bold text-medical-text-primary">{exercise.name}</h3>
-                    <p className="text-sm text-medical-text-secondary mt-1">{exercise.description}</p>
+                    <p className="text-sm text-medical-text-secondary mt-1 leading-relaxed">{exercise.description}</p>
+                    <div className="flex flex-wrap gap-2 mt-3">
+                      <span className="text-[11px] px-2.5 py-1 rounded-full bg-cyan-50 text-cyan-700 border border-cyan-100 font-semibold">
+                        {exercise.category}
+                      </span>
+                      <span className="text-[11px] px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100 font-semibold">
+                        {exercise.duration}
+                      </span>
+                      <span className={`text-[11px] px-2.5 py-1 rounded-full border font-semibold ${
+                        exercise?.demo?.videoUrl?.trim()
+                          ? 'bg-teal-50 text-teal-700 border-teal-100'
+                          : 'bg-gray-50 text-gray-600 border-gray-200'
+                      }`}>
+                        {exercise?.demo?.videoUrl?.trim() ? 'Demo ready' : 'Demo pending'}
+                      </span>
+                    </div>
                   </div>
                   <span className="text-xs px-2 py-1 rounded-full bg-teal-100 text-teal-700 font-semibold">{exercise.difficulty}</span>
                 </div>
-                <div className="grid grid-cols-3 gap-3 mt-4 text-xs text-gray-600">
-                  <div>Target: <span className="font-semibold">{exercise.targetAngle} deg</span></div>
-                  <div>Sets: <span className="font-semibold">{exercise.targetSets}</span></div>
-                  <div>Reps: <span className="font-semibold">{exercise.targetReps}</span></div>
+
+                <div className="grid grid-cols-3 gap-3 mt-4 text-xs text-gray-600 bg-slate-50 rounded-xl p-3 border border-slate-100">
+                  <div>
+                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Target</div>
+                    <div className="font-semibold text-slate-900 mt-0.5">{exercise.targetAngle} deg</div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Sets</div>
+                    <div className="font-semibold text-slate-900 mt-0.5">{exercise.targetSets}</div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Reps</div>
+                    <div className="font-semibold text-slate-900 mt-0.5">{exercise.targetReps}</div>
+                  </div>
                 </div>
-                <div className="mt-4 text-sm font-semibold text-teal-700">Open Demo & Start</div>
+
+                <div className="mt-4 pt-3 border-t border-gray-100 flex items-center justify-between">
+                  <span className="text-sm text-slate-600">Preview demo, checklist, and start</span>
+                  <span className="text-sm font-semibold text-teal-700">Open Exercise</span>
+                </div>
               </motion.button>
             ))}
           </div>
@@ -461,7 +528,8 @@ const PatientDashboard = ({ user, onStartSession, onLogout }) => {
                       <th className="py-3">Exercise</th>
                       <th className="py-3">Reps</th>
                       <th className="py-3">Max Angle</th>
-                      <th className="py-3">Improvement</th>
+                      <th className="py-3">ROM Gain</th>
+                      <th className="py-3">Progress</th>
                       <th className="py-3">Posture</th>
                     </tr>
                   </thead>
@@ -472,7 +540,8 @@ const PatientDashboard = ({ user, onStartSession, onLogout }) => {
                         <td className="py-3 text-gray-800">{s.exerciseName}</td>
                         <td className="py-3 text-gray-800">{s.totalReps}</td>
                         <td className="py-3 text-gray-800">{s.maxAngle} deg</td>
-                        <td className="py-3 text-gray-800">{s.improvementDeg} deg</td>
+                        <td className="py-3 text-gray-800">{s.romGainDeg} deg</td>
+                        <td className="py-3 text-gray-800">{s.improvementPercent}%</td>
                         <td className="py-3 text-gray-800">{s.postureAccuracy}%</td>
                       </tr>
                     ))}
@@ -489,26 +558,57 @@ const PatientDashboard = ({ user, onStartSession, onLogout }) => {
           <div className="space-y-6">
             <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm">
               <h3 className="text-xl font-bold text-medical-text-primary mb-1">Recovery Chart</h3>
-              <p className="text-xs text-medical-text-secondary mb-4">Track baseline, max angle, and target over time.</p>
+              <p className="text-xs text-medical-text-secondary mb-4">
+                {exerciseFilter === 'all'
+                  ? 'Normalized progress (%) across mixed exercises.'
+                  : 'Track max angle with robust baseline and target references.'}
+              </p>
+              <p className="text-xs text-gray-500 mb-4">
+                ROM gain = max angle - baseline. Progress % = (max angle - baseline) / (target - baseline) * 100.
+              </p>
               {historyLoading ? (
                 <div className="h-72 flex items-center justify-center text-sm text-gray-400">Loading recovery data...</div>
               ) : trendData.length ? (
+                exerciseFilter === 'all' ? (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <LineChart data={trendData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#EEF2F7" />
+                      <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                      <YAxis tick={{ fontSize: 11 }} domain={[0, 120]} />
+                      <Tooltip formatter={(value) => [`${value}%`, 'Progress']} />
+                      <Legend />
+                      <ReferenceLine y={100} stroke="#0EA5E9" strokeDasharray="4 4" label="Target %" />
+                      <Line type="monotone" dataKey="progressPercent" stroke="#0D9488" strokeWidth={3} dot={{ r: 3 }} name="Progress %" connectNulls />
+                    </LineChart>
+                  </ResponsiveContainer>
+                ) : (
                 <ResponsiveContainer width="100%" height={300}>
                   <LineChart data={trendData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#EEF2F7" />
                     <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-                    <YAxis tick={{ fontSize: 11 }} />
-                    <Tooltip />
+                    <YAxis tick={{ fontSize: 11 }} domain={[0, chartReferences.yMax]} />
+                    <Tooltip formatter={(value, name) => [`${value} deg`, name]} />
                     <Legend />
                     <Line type="monotone" dataKey="maxAngle" stroke="#0D9488" strokeWidth={3} dot={{ r: 3 }} name="Max Angle" />
-                    <Line type="monotone" dataKey="baseline" stroke="#F59E0B" strokeWidth={2} dot={false} name="Baseline" />
-                    {exerciseFilter !== 'all' && (
-                      <ReferenceLine y={exerciseLibrary.find((ex) => ex.id === exerciseFilter)?.targetAngle || 0} stroke="#0EA5E9" strokeDasharray="4 4" label="Target" />
+                    {Number.isFinite(chartReferences.baselineRef) && (
+                      <ReferenceLine y={chartReferences.baselineRef} stroke="#F59E0B" strokeDasharray="4 4" label="Baseline ref" />
+                    )}
+                    {Number.isFinite(chartReferences.targetRef) && (
+                      <ReferenceLine y={chartReferences.targetRef} stroke="#0EA5E9" strokeDasharray="4 4" label="Target" />
                     )}
                   </LineChart>
                 </ResponsiveContainer>
+                )
               ) : (
                 <div className="h-72 flex items-center justify-center text-sm text-gray-400">No sessions yet to plot.</div>
+              )}
+              {!historyLoading && filteredHistory.length > 0 && (
+                <p className="text-xs text-gray-500 mt-3">
+                  Plotting {recoveryDiagnostics.plotted} of {recoveryDiagnostics.total} sessions.
+                  {recoveryDiagnostics.chartable !== recoveryDiagnostics.plotted ? ` ${recoveryDiagnostics.chartable} passed strict quality checks.` : ''}
+                  {recoveryDiagnostics.legacyAdjustedCount > 0 ? ` Legacy angle normalization applied to ${recoveryDiagnostics.legacyAdjustedCount} older session${recoveryDiagnostics.legacyAdjustedCount === 1 ? '' : 's'}.` : ''}
+                  {recoveryDiagnostics.anomalyCount > 0 ? ` ${recoveryDiagnostics.anomalyCount} session${recoveryDiagnostics.anomalyCount === 1 ? '' : 's'} skipped due to baseline-target mismatch.` : ''}
+                </p>
               )}
             </div>
 
@@ -522,7 +622,7 @@ const PatientDashboard = ({ user, onStartSession, onLogout }) => {
                     <YAxis tick={{ fontSize: 11 }} />
                     <Tooltip />
                     <Legend />
-                    <Bar dataKey="improvement" fill="#0D9488" name="Avg Improvement (deg)" radius={[6, 6, 0, 0]} />
+                    <Bar dataKey="progress" fill="#0D9488" name="Avg Progress (%)" radius={[6, 6, 0, 0]} />
                     <Bar dataKey="posture" fill="#2563EB" name="Avg Posture (%)" radius={[6, 6, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>

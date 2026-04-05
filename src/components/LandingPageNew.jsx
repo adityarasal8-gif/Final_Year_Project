@@ -323,11 +323,43 @@ const FAQItem = ({ question, answer, index }) => {
   );
 };
 
+const toYouTubeEmbedUrl = (videoUrl) => {
+  if (!videoUrl || typeof videoUrl !== 'string') return null;
+
+  try {
+    const parsed = new URL(videoUrl);
+    const host = parsed.hostname.replace('www.', '');
+    let videoId = null;
+
+    if (host === 'youtu.be') {
+      videoId = parsed.pathname.split('/').filter(Boolean)[0] || null;
+    } else if (host === 'youtube.com' || host === 'm.youtube.com') {
+      if (parsed.pathname === '/watch') {
+        videoId = parsed.searchParams.get('v');
+      } else if (parsed.pathname.startsWith('/embed/')) {
+        videoId = parsed.pathname.split('/')[2] || null;
+      } else if (parsed.pathname.startsWith('/shorts/')) {
+        videoId = parsed.pathname.split('/')[2] || null;
+      }
+    }
+
+    if (!videoId) return null;
+    return `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0`;
+  } catch {
+    return null;
+  }
+};
+
 const LandingPage = ({ onAuthSuccess }) => {
   const [showAuth, setShowAuth] = useState(null);
   const [userType, setUserType] = useState(null);
+  const [isDemoVideoOpen, setIsDemoVideoOpen] = useState(false);
   const { scrollYProgress } = useScroll();
   const opacity = useTransform(scrollYProgress, [0, 0.2], [1, 0]);
+
+  // Paste your YouTube URL here (watch/short/youtu.be links all supported).
+  const DEMO_VIDEO_URL = 'https://www.youtube.com/watch?v=YOUR_VIDEO_ID';
+  const demoVideoEmbedUrl = toYouTubeEmbedUrl(DEMO_VIDEO_URL);
 
   const fadeInUp = {
     hidden: { opacity: 0, y: 30 },
@@ -368,6 +400,15 @@ const LandingPage = ({ onAuthSuccess }) => {
   const handleBack = () => {
     setShowAuth(null);
     setUserType(null);
+  };
+
+  const openDemoVideo = () => {
+    if (!demoVideoEmbedUrl) {
+      console.warn('⚠️ Invalid YouTube URL. Update DEMO_VIDEO_URL in LandingPageNew.jsx');
+      return;
+    }
+
+    setIsDemoVideoOpen(true);
   };
 
   if (showAuth === 'login') {
@@ -1529,7 +1570,8 @@ const LandingPage = ({ onAuthSuccess }) => {
                   icon: Video, 
                   title: "Demo Video", 
                   desc: "Full system walkthrough",
-                  badge: "5 MIN"
+                  badge: "5 MIN",
+                  onClick: openDemoVideo
                 }
               ].map((resource, index) => (
                 <motion.button
@@ -1539,6 +1581,7 @@ const LandingPage = ({ onAuthSuccess }) => {
                   viewport={{ once: false }}
                   transition={{ delay: index * 0.1 }}
                   whileHover={{ y: -4 }}
+                  onClick={() => resource.onClick?.()}
                   className="bg-white/10 backdrop-blur-md border border-white/20 rounded-xl p-6 text-left hover:bg-white/15 transition-all group"
                 >
                   <div className="flex items-start justify-between mb-3">
@@ -1634,17 +1677,28 @@ const LandingPage = ({ onAuthSuccess }) => {
                 <h4 className="font-bold text-lg mb-4 text-white">Resources</h4>
                 <ul className="space-y-3">
                   {[
-                    { icon: Github, label: "GitHub Repository" },
-                    { icon: FileText, label: "Project Report" },
-                    { icon: BookOpen, label: "Documentation" },
-                    { icon: Video, label: "Demo Video" },
-                    { icon: Presentation, label: "PPT Slides" }
+                    { icon: Github, label: "GitHub Repository", href: "#" },
+                    { icon: FileText, label: "Project Report", href: "#" },
+                    { icon: BookOpen, label: "Documentation", href: "#" },
+                    { icon: Video, label: "Demo Video", onClick: openDemoVideo },
+                    { icon: Presentation, label: "PPT Slides", href: "#" }
                   ].map((link, index) => (
                     <li key={index}>
-                      <a href="#" className="text-gray-400 hover:text-white transition-colors flex items-center gap-2 group">
-                        <link.icon className="w-4 h-4 group-hover:scale-110 transition-transform" />
-                        {link.label}
-                      </a>
+                      {link.onClick ? (
+                        <button
+                          type="button"
+                          onClick={link.onClick}
+                          className="text-gray-400 hover:text-white transition-colors flex items-center gap-2 group"
+                        >
+                          <link.icon className="w-4 h-4 group-hover:scale-110 transition-transform" />
+                          {link.label}
+                        </button>
+                      ) : (
+                        <a href={link.href} className="text-gray-400 hover:text-white transition-colors flex items-center gap-2 group">
+                          <link.icon className="w-4 h-4 group-hover:scale-110 transition-transform" />
+                          {link.label}
+                        </a>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -1746,6 +1800,54 @@ const LandingPage = ({ onAuthSuccess }) => {
           </div>
         </div>
       </footer>
+
+      <AnimatePresence>
+        {isDemoVideoOpen && (
+          <motion.div
+            className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center px-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setIsDemoVideoOpen(false)}
+          >
+            <motion.div
+              className="w-full max-w-5xl bg-black border border-white/20 rounded-2xl overflow-hidden shadow-2xl"
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              transition={{ type: 'spring', stiffness: 220, damping: 24 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-4 py-3 border-b border-white/15 bg-slate-900/80">
+                <h3 className="text-white font-semibold">Demo Video</h3>
+                <button
+                  type="button"
+                  onClick={() => setIsDemoVideoOpen(false)}
+                  className="text-gray-300 hover:text-white text-sm px-2 py-1 rounded border border-white/20"
+                >
+                  Close
+                </button>
+              </div>
+
+              {demoVideoEmbedUrl ? (
+                <div className="relative w-full" style={{ paddingTop: '56.25%' }}>
+                  <iframe
+                    title="Physio Demo Video"
+                    src={demoVideoEmbedUrl}
+                    className="absolute top-0 left-0 w-full h-full"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                    allowFullScreen
+                  />
+                </div>
+              ) : (
+                <div className="p-8 text-center text-gray-300">
+                  Invalid YouTube URL. Update DEMO_VIDEO_URL in LandingPageNew.jsx.
+                </div>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

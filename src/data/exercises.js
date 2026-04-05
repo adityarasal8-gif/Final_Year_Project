@@ -85,9 +85,41 @@ export const exerciseLibrary = [
       minRepInterval: 650
     },
 
+    decisionEngine: {
+      baselineCleaning: {
+        minSamples: 30,
+        lowerPercentile: 10,
+        upperPercentile: 90
+      },
+      sessionCleaning: {
+        lowerPercentile: 10,
+        upperPercentile: 90
+      },
+      adaptive: {
+        lowerAnglePadding: 10,
+        upperAnglePadding: 5,
+        stabilityPadding: 5
+      },
+      scoring: {
+        weights: { angle: 45, stability: 30, reps: 25 },
+        angleTolerance: 10,
+        stabilityTolerance: 5,
+        repThresholds: { full: 8, partial: 5 }
+      },
+      fallback: {
+        angleRange: [45, 85],
+        stabilityMax: 10
+      },
+      decisionThresholds: {
+        ready: 80,
+        progressing: 60
+      }
+    },
+
     demo: {
       type: 'animation',
-      key: 'knee-flexion'
+      key: 'knee-flexion',
+      videoUrl: 'https://youtu.be/YubFqnGJ5Qk?si=6w2TR7vhKLGnHwtX' // Paste Knee Flexion demo URL (YouTube or direct video)
     }
   },
   
@@ -144,10 +176,16 @@ export const exerciseLibrary = [
     
     repDetection: {
       movementPattern: 'increase_then_decrease',
-      peakThreshold: 160,
-      resetThreshold: 105,
-      minPeakHoldTime: 300,
-      minRepInterval: 700
+      peakThreshold: 136,
+      peakBaselineOffset: -16,
+      minPeakThreshold: 118,
+      maxPeakThreshold: 150,
+      resetThreshold: 112,
+      resetBaselineDrop: 22,
+      minResetThreshold: 100,
+      maxResetThreshold: 132,
+      minPeakHoldTime: 220,
+      minRepInterval: 650
     },
 
     posture: {
@@ -158,15 +196,47 @@ export const exerciseLibrary = [
     },
 
     calibration: {
-      peakThreshold: 145,
-      resetThreshold: 110,
-      minPeakHoldTime: 250,
+      peakThreshold: 130,
+      resetThreshold: 95,
+      minPeakHoldTime: 220,
       minRepInterval: 700
+    },
+
+    decisionEngine: {
+      baselineCleaning: {
+        minSamples: 30,
+        lowerPercentile: 10,
+        upperPercentile: 90
+      },
+      sessionCleaning: {
+        lowerPercentile: 10,
+        upperPercentile: 90
+      },
+      adaptive: {
+        lowerAnglePadding: 10,
+        upperAnglePadding: 5,
+        stabilityPadding: 5
+      },
+      scoring: {
+        weights: { angle: 50, stability: 25, reps: 25 },
+        angleTolerance: 10,
+        stabilityTolerance: 5,
+        repThresholds: { full: 8, partial: 5 }
+      },
+      fallback: {
+        angleRange: [150, 180],
+        stabilityMax: 8
+      },
+      decisionThresholds: {
+        ready: 80,
+        progressing: 60
+      }
     },
 
     demo: {
       type: 'animation',
-      key: 'knee-extension'
+      key: 'knee-extension',
+      videoUrl: 'https://youtu.be/UmM40QNd6bA?si=raUZ-n9M8BhZ2Y-y' // Paste Knee Extension demo URL (YouTube or direct video)
     }
   },
   
@@ -184,7 +254,8 @@ export const exerciseLibrary = [
     targetReps: 12,
     restBetweenSets: 60,
 
-    angleMode: 'inner_knee_angle',
+    // Track leg elevation angle (hip-to-knee relative to horizontal axis).
+    angleMode: 'leg_raise_angle',
     
     instructions: [
       'Lie on your back with one leg bent and one straight',
@@ -222,29 +293,62 @@ export const exerciseLibrary = [
     
     repDetection: {
       movementPattern: 'increase_then_decrease',
-      peakThreshold: 168,
-      resetThreshold: 148,
+      peakThreshold: 28,
+      resetThreshold: 10,
       minPeakHoldTime: 250,
-      minRepInterval: 750
+      minRepInterval: 800
     },
 
     posture: {
-      minAngle: 140,
-      maxAngle: 180,
+      minAngle: 0,
+      maxAngle: 80,
       requireSymmetry: false,
       maxSideDiff: 40
     },
 
     calibration: {
-      peakThreshold: 162,
-      resetThreshold: 145,
-      minPeakHoldTime: 200,
-      minRepInterval: 700
+      movementPattern: 'increase_then_decrease',
+      peakThreshold: 24,
+      resetThreshold: 8,
+      minPeakHoldTime: 220,
+      minRepInterval: 750
+    },
+
+    decisionEngine: {
+      baselineCleaning: {
+        minSamples: 30,
+        lowerPercentile: 10,
+        upperPercentile: 90
+      },
+      sessionCleaning: {
+        lowerPercentile: 10,
+        upperPercentile: 90
+      },
+      adaptive: {
+        lowerAnglePadding: 10,
+        upperAnglePadding: 5,
+        stabilityPadding: 5
+      },
+      scoring: {
+        weights: { angle: 60, stability: 20, reps: 20 },
+        angleTolerance: 10,
+        stabilityTolerance: 5,
+        repThresholds: { full: 8, partial: 5 }
+      },
+      fallback: {
+        angleRange: [25, 65],
+        stabilityMax: 9
+      },
+      decisionThresholds: {
+        ready: 80,
+        progressing: 60
+      }
     },
 
     demo: {
       type: 'animation',
-      key: 'straight-leg-raise'
+      key: 'straight-leg-raise',
+      videoUrl: 'https://youtu.be/J1uKCj4jMUQ?si=I35Jf-S6ZROu1N7K' // Paste Straight Leg Raise demo URL (YouTube or direct video)
     }
   },
   
@@ -309,27 +413,71 @@ export const exerciseLibrary = [
       movementPattern: 'increase_then_decrease',
       peakThreshold: 70,
       resetThreshold: 22,
+      adaptiveResetFactor: 0.55,
+      adaptiveResetMin: 34,
       minPeakHoldTime: 220,
-      minRepInterval: 650
+      minRepInterval: 650,
+      requireBothLegs: true,
+      maxRepSideDiff: 16,
+      minActiveAngle: 18
     },
 
     posture: {
-      minAngle: 15,
+      minAngle: 0,
       maxAngle: 120,
       requireSymmetry: true,
-      maxSideDiff: 18
+      maxSideDiff: 30,
+      movementThreshold: 12,
+      movementDeltaThreshold: 8
     },
 
     calibration: {
-      peakThreshold: 35,
-      resetThreshold: 18,
+      movementPattern: 'increase_then_decrease',
+      peakThreshold: 65,
+      resetThreshold: 20,
+      adaptiveResetFactor: 0.55,
+      adaptiveResetMin: 32,
       minPeakHoldTime: 220,
-      minRepInterval: 650
+      minRepInterval: 650,
+      maxCalibrationSideDiff: 18,
+      minCalibrationActiveAngle: 18
+    },
+
+    decisionEngine: {
+      baselineCleaning: {
+        minSamples: 30,
+        lowerPercentile: 10,
+        upperPercentile: 90
+      },
+      sessionCleaning: {
+        lowerPercentile: 10,
+        upperPercentile: 90
+      },
+      adaptive: {
+        lowerAnglePadding: 10,
+        upperAnglePadding: 5,
+        stabilityPadding: 5
+      },
+      scoring: {
+        weights: { angle: 40, stability: 30, reps: 30 },
+        angleTolerance: 10,
+        stabilityTolerance: 5,
+        repThresholds: { full: 8, partial: 5 }
+      },
+      fallback: {
+        angleRange: [60, 95],
+        stabilityMax: 12
+      },
+      decisionThresholds: {
+        ready: 80,
+        progressing: 60
+      }
     },
 
     demo: {
       type: 'animation',
-      key: 'bodyweight-squats'
+      key: 'bodyweight-squats',
+      videoUrl: 'https://youtu.be/WbKT5b8ydmM?si=1xslMZCFVeGmapru' // Paste Bodyweight Squats demo URL (YouTube or direct video)
     }
   }
 ];

@@ -21,7 +21,7 @@ When a therapist signs up:
 4. ✅ Initializes empty `linkedPatients` array
 5. ✅ Code is stored in user document
 
-**Code Generation** (`src/utils/firestore.js` lines 189-220):
+**Code Generation** (`src/utils/firestore.js`):
 ```javascript
 const generateTherapistCode = () => {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -61,7 +61,7 @@ export const createTherapistProfile = async (therapistId, therapistData) => {
 ---
 
 ### **Step 2: Therapist Shares Code**
-**Location**: `src/components/TherapistDashboard.jsx` lines 300-335
+**Location**: `src/components/TherapistDashboard.jsx`
 
 TherapistDashboard displays the code prominently:
 1. ✅ Large code display (4xl font, monospace)
@@ -89,7 +89,7 @@ TherapistDashboard displays the code prominently:
 ---
 
 ### **Step 3: Patient Registration with Code**
-**Location**: `src/components/Signup.jsx` lines 304-366
+**Location**: `src/components/Signup.jsx`
 
 Patients have two options during signup:
 1. ✅ **Independent**: Exercise without therapist supervision
@@ -134,7 +134,7 @@ Patients have two options during signup:
 ---
 
 ### **Step 4: Code Validation & Linking**
-**Location**: `src/utils/firestore.js` lines 240-268
+**Location**: `src/utils/firestore.js`
 
 When patient enters therapist code:
 1. ✅ Validates code exists in database
@@ -172,7 +172,7 @@ export const validateTherapistCode = async (code) => {
 };
 ```
 
-**Linking Process** (`src/utils/firestore.js` lines 276-308):
+**Linking Process** (`src/utils/firestore.js`):
 ```javascript
 export const linkPatientToTherapist = async (patientId, therapistId, therapistCode) => {
   // Update patient profile
@@ -204,9 +204,9 @@ export const linkPatientToTherapist = async (patientId, therapistId, therapistCo
 ---
 
 ### **Step 5: Patients Appear in Therapist Dashboard**
-**Location**: `src/components/TherapistDashboard.jsx` lines 159-182
+**Location**: `src/components/TherapistDashboard.jsx`
 
-**Database Query** (`src/utils/firestore.js` lines 387-410):
+**Database Query** (`src/utils/firestore.js`):
 ```javascript
 export const getTherapistPatients = async (therapistId) => {
   try {
@@ -312,17 +312,17 @@ useEffect(() => {
 
 | Feature | Status | Location |
 |---------|--------|----------|
-| Therapist code generation | ✅ Working | `firestore.js:189-220` |
+| Therapist code generation | ✅ Working | `src/utils/firestore.js` |
 | Unique code validation | ✅ Working | Checks DB for duplicates |
-| Code display in dashboard | ✅ Working | `TherapistDashboard.jsx:300-335` |
-| Copy-to-clipboard | ✅ Working | `TherapistDashboard.jsx:148-152` |
-| Patient type selection | ✅ Working | `Signup.jsx:304-366` |
-| Code input field | ✅ Working | `Signup.jsx:458-474` |
-| Code validation on signup | ✅ Working | `firestore.js:240-268` |
-| Bi-directional linking | ✅ Working | `firestore.js:276-308` |
-| Patient list query | ✅ Working | `firestore.js:387-410` |
-| Session history tracking | ✅ Working | `firestore.js:415-445` |
-| Compliance calculation | ✅ Working | `firestore.js:450-473` |
+| Code display in dashboard | ✅ Working | `src/components/TherapistDashboard.jsx` |
+| Copy-to-clipboard | ✅ Working | `src/components/TherapistDashboard.jsx` |
+| Patient type selection | ✅ Working | `src/components/Signup.jsx` |
+| Code input field | ✅ Working | `src/components/Signup.jsx` |
+| Code validation on signup | ✅ Working | `src/utils/firestore.js` |
+| Bi-directional linking | ✅ Working | `src/utils/firestore.js` |
+| Patient list query | ✅ Working | `src/utils/firestore.js` |
+| Session history tracking | ✅ Working | `src/utils/firestore.js` |
+| Compliance calculation | ✅ Working | `src/utils/firestore.js` |
 
 ---
 
@@ -387,7 +387,7 @@ useEffect(() => {
 
 ### **Issue 1: Patient Signs Up Without Code**
 **Status**: ✅ Handled  
-**Behavior**: Code input is optional. Patient can connect later via "Switch Mode" feature (implemented in `firestore.js:316-377`)
+**Behavior**: Code input is optional. Patient can connect later via "Switch Mode" feature (implemented in `src/utils/firestore.js`)
 
 ### **Issue 2: Invalid Code Entered**
 **Status**: ✅ Handled  
@@ -482,11 +482,11 @@ The therapist-patient connection system is **fully functional** and ready for pr
 
 | File | Purpose | Lines |
 |------|---------|-------|
-| `src/utils/firestore.js` | Database operations | 189-473 |
-| `src/components/Signup.jsx` | Patient registration | 1-576 |
-| `src/components/TherapistDashboard.jsx` | Therapist UI | 1-672 |
-| `src/App.jsx` | Role-based routing | 1-283 |
-| `src/components/Login.jsx` | Authentication | 1-350 |
+| `src/utils/firestore.js` | Database operations | Current implementation |
+| `src/components/Signup.jsx` | Patient registration | Current implementation |
+| `src/components/TherapistDashboard.jsx` | Therapist UI | Current implementation |
+| `src/App.jsx` | Role-based routing | Current implementation |
+| `src/components/Login.jsx` | Authentication | Current implementation |
 
 ---
 

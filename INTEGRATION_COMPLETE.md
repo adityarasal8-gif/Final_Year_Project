@@ -41,9 +41,8 @@ Renamed with `.old` extension for backup:
 ### 4. **Design System Files**
 Created comprehensive documentation:
 - ✅ `tailwind.config.js` - Medical colors + animations
-- ✅ `DESIGN_SYSTEM.md` - Complete design tokens
+- ✅ `PRODUCT_UI_AND_PHASES_CONSOLIDATED.md` - Combined design, phase, and UI comparison docs
 - ✅ `QUICK_START.md` - Integration guide
-- ✅ `UI_COMPARISON.md` - Before/after comparison
 - ✅ `AppExample.jsx` - Reference implementation
 
 ---
@@ -89,7 +88,7 @@ Created comprehensive documentation:
 
 ## 🔧 Testing Checklist
 
-Open `http://localhost:3000/` and verify:
+Open `http://localhost:5173/` and verify:
 
 ### Landing Page
 - [ ] Hero section loads with animations
@@ -166,7 +165,7 @@ src/
 │   ├── PatientViewport.jsx.old  📦 Archived
 │   └── Viewport.jsx.old         📦 Archived
 ├── context/
-│   └── SessionContext.jsx       ✅ Existing (unchanged)
+│   └── SessionContext.jsx       ✅ Updated (scoped baseline + metrics)
 ├── hooks/
 │   └── usePoseEstimation.js     ✅ Existing (unchanged)
 ├── utils/
@@ -179,11 +178,12 @@ src/
 Root:
 ├── tailwind.config.js           ✨ UPDATED - Medical colors
 ├── index.html                   ✨ UPDATED - Fonts + theme
-├── DESIGN_SYSTEM.md             📚 NEW - Complete design docs
+├── PRODUCT_UI_AND_PHASES_CONSOLIDATED.md  📚 NEW - Combined design and phase docs
 ├── QUICK_START.md               📚 NEW - Integration guide
-├── UI_COMPARISON.md             📚 NEW - Before/after
 └── AppExample.jsx               📚 NEW - Reference code
 ```
+
+Note: `AppExample.jsx` is located at `src/AppExample.jsx`.
 
 ---
 
@@ -263,8 +263,8 @@ Rename-Item PatientViewport.jsx.old PatientViewport.jsx
 ## 🎉 You're All Set!
 
 The medical design system is fully integrated and running. Visit:
-- **Local:** http://localhost:3000/
-- **Network:** http://10.247.147.199:3000/ (for mobile testing)
+- **Local:** http://localhost:5173/
+- **Network:** Use the Vite network URL shown in terminal output (for mobile testing)
 
 **Next Steps:**
 1. Test the complete flow
@@ -273,9 +273,8 @@ The medical design system is fully integrated and running. Visit:
 4. Deploy to production
 
 **Documentation:**
-- Design System: [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md)
+- Consolidated Docs: [PRODUCT_UI_AND_PHASES_CONSOLIDATED.md](PRODUCT_UI_AND_PHASES_CONSOLIDATED.md)
 - Quick Start: [QUICK_START.md](QUICK_START.md)
-- Comparison: [UI_COMPARISON.md](UI_COMPARISON.md)
 
 ---
 

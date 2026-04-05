@@ -9,6 +9,12 @@ import { X } from 'lucide-react';
 import { usePoseEstimation } from '../hooks/usePoseEstimation';
 import { useSession, SESSION_PHASES } from '../context/SessionContext';
 import { drawLegSkeleton } from '../utils/drawing';
+import {
+  buildBaselineProfile,
+  calculateSessionMetrics,
+  calculateExplicitStageScore,
+  decideRecoveryStage
+} from '../utils/geometry';
 
 const normalizeAngleForExercise = (rawAngle, angleMode) => {
   if (typeof rawAngle !== 'number') return null;
@@ -21,6 +27,33 @@ const normalizeAngleForExercise = (rawAngle, angleMode) => {
 };
 
 const isFiniteAngle = (value) => typeof value === 'number' && Number.isFinite(value);
+
+const resolveResetThreshold = (peakThreshold, resetThreshold, config = {}, movementPattern = 'increase_then_decrease') => {
+  const adaptiveResetFactor = Number.isFinite(config?.adaptiveResetFactor)
+    ? config.adaptiveResetFactor
+    : null;
+  const adaptiveResetMin = Number.isFinite(config?.adaptiveResetMin)
+    ? config.adaptiveResetMin
+    : null;
+
+  if (!Number.isFinite(adaptiveResetFactor) || !Number.isFinite(peakThreshold) || !Number.isFinite(resetThreshold)) {
+    return resetThreshold;
+  }
+
+  const adaptiveByPeak = peakThreshold * adaptiveResetFactor;
+
+  if (movementPattern === 'increase_then_decrease') {
+    const boostedReset = Math.max(resetThreshold, adaptiveByPeak);
+    return Number.isFinite(adaptiveResetMin)
+      ? Math.max(boostedReset, adaptiveResetMin)
+      : boostedReset;
+  }
+
+  const loweredReset = Math.min(resetThreshold, adaptiveByPeak);
+  return Number.isFinite(adaptiveResetMin)
+    ? Math.min(loweredReset, adaptiveResetMin)
+    : loweredReset;
+};
 
 const evaluatePosture = (exercise, legSide, leftAngle, rightAngle) => {
   const posture = exercise?.posture || {};
@@ -35,10 +68,36 @@ const evaluatePosture = (exercise, legSide, leftAngle, rightAngle) => {
   if (legSide === 'left') return leftValid;
   if (legSide === 'right') return rightValid;
 
-  if (!leftValid || !rightValid) return false;
-  if (!requireSymmetry) return true;
+  // For bilateral exercises, avoid marking posture incorrect when one side is
+  // temporarily unavailable due camera occlusion/noise.
+  if (!leftValid && !rightValid) return false;
+  if (!requireSymmetry) return leftValid || rightValid;
+
+  if (!(leftValid && rightValid)) return true;
 
   return Math.abs(leftAngle - rightAngle) <= maxSideDiff;
+};
+
+const toCameraErrorMessage = (error) => {
+  const name = String(error?.name || '').trim();
+
+  if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+    return 'Camera permission denied. Allow camera access in browser settings and retry.';
+  }
+
+  if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+    return 'No camera device found. Connect/enable a webcam and retry.';
+  }
+
+  if (name === 'NotReadableError' || name === 'TrackStartError') {
+    return 'Camera is busy or unavailable. Close other apps using the camera and retry.';
+  }
+
+  if (name === 'OverconstrainedError' || name === 'ConstraintNotSatisfiedError') {
+    return 'Requested camera settings are not supported. Retrying with fallback settings may help.';
+  }
+
+  return error?.message || 'Unable to access camera.';
 };
 
 const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
@@ -71,6 +130,12 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
     peakStartedAt: 0,
     lastCaptureAt: 0
   });
+  const calibrationSamplesRef = useRef([]);
+  const sessionAngleSamplesRef = useRef([]);
+  const recentAnglesRef = useRef([]);
+  const postureQualityRef = useRef({ goodFrames: 0, totalFrames: 0 });
+  const postureWindowRef = useRef([]);
+  const lastPostureGoodAtRef = useRef(0);
   const hasStartedSessionRef = useRef(false);
 
   const [cameraReady, setCameraReady] = useState(false);
@@ -79,6 +144,7 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
   const [calibrationReps, setCalibrationReps] = useState([]);
   const [isCalibrating, setIsCalibrating] = useState(true);
   const [calibrationScale, setCalibrationScale] = useState(1);
+  const [postureState, setPostureState] = useState('neutral');
 
   const [overlayPositions, setOverlayPositions] = useState({
     reps: { x: 16, y: 16 },
@@ -101,7 +167,10 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
     detectRep,
     reps,
     baselineROM,
+    baselineProfile,
+    enableDecisionEngine,
     setBaseline,
+    setExerciseContext,
     currentAngle,
     startSession,
     endSession,
@@ -109,19 +178,82 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
     setTargetROM
   } = useSession();
 
-  const activeLeg = selectedLeg || legSide || 'left';
+  const activeLeg = selectedLeg || legSide || exercise?.legSide || 'left';
 
   const handleAngleUpdate = useCallback((primaryAngle, angles) => {
     const normalizedPrimary = normalizeAngleForExercise(primaryAngle, exercise?.angleMode);
     const normalizedLeft = normalizeAngleForExercise(angles?.leftAngle, exercise?.angleMode);
     const normalizedRight = normalizeAngleForExercise(angles?.rightAngle, exercise?.angleMode);
     const postureOk = evaluatePosture(exercise, activeLeg, normalizedLeft, normalizedRight);
-
-    if (isFiniteAngle(normalizedPrimary)) {
-      updateAngle(normalizedPrimary);
-      detectRep(normalizedPrimary, exercise?.repDetection || null, postureOk);
+    const now = performance.now();
+    if (postureOk) {
+      lastPostureGoodAtRef.current = now;
     }
-  }, [activeLeg, detectRep, exercise, updateAngle]);
+    const postureGate = postureOk || (now - lastPostureGoodAtRef.current) <= 260;
+    const bilateralValues = [normalizedLeft, normalizedRight].filter((value) => isFiniteAngle(value));
+
+    const requireBothLegs = !!exercise?.repDetection?.requireBothLegs;
+    const maxRepSideDiff = Number.isFinite(exercise?.repDetection?.maxRepSideDiff)
+      ? exercise.repDetection.maxRepSideDiff
+      : 16;
+    const minActiveAngle = Number.isFinite(exercise?.repDetection?.minActiveAngle)
+      ? exercise.repDetection.minActiveAngle
+      : 18;
+    const bothLegsVisible = isFiniteAngle(normalizedLeft) && isFiniteAngle(normalizedRight);
+    const sideDiff = bothLegsVisible ? Math.abs(normalizedLeft - normalizedRight) : Number.POSITIVE_INFINITY;
+    const bilateralSymmetric = bothLegsVisible && sideDiff <= maxRepSideDiff;
+    const bilateralActive = bothLegsVisible && normalizedLeft >= minActiveAngle && normalizedRight >= minActiveAngle;
+    const bilateralRepGate = activeLeg === 'both' && requireBothLegs
+      ? (bilateralSymmetric && bilateralActive)
+      : true;
+
+    let effectivePrimary = normalizedPrimary;
+    if (activeLeg === 'both' && bilateralValues.length > 0) {
+      if (exercise?.angleMode === 'flexion_rom') {
+        effectivePrimary = Math.max(...bilateralValues);
+      } else {
+        effectivePrimary = bilateralValues.reduce((sum, value) => sum + value, 0) / bilateralValues.length;
+      }
+    }
+
+    if (isFiniteAngle(effectivePrimary)) {
+      recentAnglesRef.current.push(effectivePrimary);
+      if (recentAnglesRef.current.length > 18) {
+        recentAnglesRef.current.shift();
+      }
+
+      const movementDeltaThreshold = Number.isFinite(exercise?.posture?.movementDeltaThreshold)
+        ? exercise.posture.movementDeltaThreshold
+        : 6;
+      const recentAngles = recentAnglesRef.current.filter((value) => Number.isFinite(value));
+      const movementRange = recentAngles.length > 1
+        ? Math.max(...recentAngles) - Math.min(...recentAngles)
+        : 0;
+      const isMovementActive = movementRange >= movementDeltaThreshold;
+
+      if (phase === SESSION_PHASES.EXERCISE && isMovementActive) {
+        postureQualityRef.current.totalFrames += 1;
+        if (postureOk) {
+          postureQualityRef.current.goodFrames += 1;
+        }
+
+        postureWindowRef.current.push(postureOk);
+        if (postureWindowRef.current.length > 24) {
+          postureWindowRef.current.shift();
+        }
+      }
+
+      if (phase === SESSION_PHASES.EXERCISE && postureGate && bilateralRepGate) {
+        sessionAngleSamplesRef.current.push(effectivePrimary);
+        if (sessionAngleSamplesRef.current.length > 3600) {
+          sessionAngleSamplesRef.current.shift();
+        }
+      }
+
+      updateAngle(effectivePrimary);
+      detectRep(effectivePrimary, exercise?.repDetection || null, postureGate && bilateralRepGate);
+    }
+  }, [activeLeg, detectRep, exercise, phase, updateAngle]);
 
   const {
     isInitialized,
@@ -132,6 +264,8 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
   } = usePoseEstimation({
     legSide: activeLeg,
     enableSmoothing: true,
+    metricMode: exercise?.angleMode || 'inner_knee_angle',
+    angleComputationMode: 'auto',
     onAngleUpdate: handleAngleUpdate,
     minDetectionConfidence: 0.5,
     minPresenceConfidence: 0.5
@@ -142,6 +276,39 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
   const normalizedLeftAngle = normalizeAngleForExercise(detectedLeftAngle, exercise?.angleMode);
   const normalizedRightAngle = normalizeAngleForExercise(detectedRightAngle, exercise?.angleMode);
   const postureAccurate = evaluatePosture(exercise, activeLeg, normalizedLeftAngle, normalizedRightAngle);
+
+  useEffect(() => {
+    if (phase !== SESSION_PHASES.EXERCISE) {
+      setPostureState('neutral');
+      postureWindowRef.current = [];
+      return;
+    }
+
+    const movementDeltaThreshold = Number.isFinite(exercise?.posture?.movementDeltaThreshold)
+      ? exercise.posture.movementDeltaThreshold
+      : 6;
+    const recentAngles = recentAnglesRef.current.filter((value) => Number.isFinite(value));
+    const movementRange = recentAngles.length > 1
+      ? Math.max(...recentAngles) - Math.min(...recentAngles)
+      : 0;
+    const isMovementActive = movementRange >= movementDeltaThreshold;
+
+    if (!isMovementActive) {
+      setPostureState('neutral');
+      postureWindowRef.current = [];
+      return;
+    }
+
+    const postureVotes = postureWindowRef.current;
+    if (!postureVotes.length) {
+      setPostureState(postureAccurate ? 'correct' : 'incorrect');
+      return;
+    }
+
+    const correctVotes = postureVotes.filter(Boolean).length;
+    const postureRatio = correctVotes / postureVotes.length;
+    setPostureState(postureRatio >= 0.65 ? 'correct' : 'incorrect');
+  }, [currentAngle, exercise, phase, postureAccurate]);
   const derivedSet = Math.min(
     exercise.targetSets || 1,
     Math.floor((reps || 0) / Math.max(1, exercise.targetReps || 1)) + 1
@@ -286,13 +453,15 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
   }, [phase]);
 
   useEffect(() => {
-    if (selectedLeg) {
-      setLegSide(selectedLeg);
-    }
+    setLegSide(activeLeg);
+    setExerciseContext({
+      exerciseId: exercise?.id || null,
+      angleMode: exercise?.angleMode || 'inner_knee_angle'
+    });
     if (exercise?.targetAngle) {
       setTargetROM(exercise.targetAngle);
     }
-  }, [exercise, selectedLeg, setLegSide, setTargetROM]);
+  }, [activeLeg, exercise, setExerciseContext, setLegSide, setTargetROM]);
 
   useEffect(() => {
     if (cameraReady && isInitialized && phase === SESSION_PHASES.SETUP) {
@@ -310,6 +479,12 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
     if (phase === SESSION_PHASES.CALIBRATION) {
       setIsCalibrating(true);
       setCalibrationReps([]);
+      calibrationSamplesRef.current = [];
+      sessionAngleSamplesRef.current = [];
+      recentAnglesRef.current = [];
+      postureQualityRef.current = { goodFrames: 0, totalFrames: 0 };
+      postureWindowRef.current = [];
+      lastPostureGoodAtRef.current = 0;
       calibrationTrackerRef.current = {
         inPeak: false,
         peakAngle: 0,
@@ -321,6 +496,9 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
 
   useEffect(() => {
     if (phase === SESSION_PHASES.EXERCISE && !isCalibrating && !hasStartedSessionRef.current) {
+      sessionAngleSamplesRef.current = [];
+      postureQualityRef.current = { goodFrames: 0, totalFrames: 0 };
+      postureWindowRef.current = [];
       startSession();
       hasStartedSessionRef.current = true;
     }
@@ -335,16 +513,48 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
       return;
     }
 
+    const bilateralVisible = isFiniteAngle(normalizedLeftAngle) || isFiniteAngle(normalizedRightAngle);
+    const bothLegsVisibleForCalibration = isFiniteAngle(normalizedLeftAngle) && isFiniteAngle(normalizedRightAngle);
+    const maxCalibrationSideDiff = Number.isFinite(exercise?.calibration?.maxCalibrationSideDiff)
+      ? exercise.calibration.maxCalibrationSideDiff
+      : 20;
+    const minCalibrationActiveAngle = Number.isFinite(exercise?.calibration?.minCalibrationActiveAngle)
+      ? exercise.calibration.minCalibrationActiveAngle
+      : 18;
+    const calibrationSideDiff = bothLegsVisibleForCalibration
+      ? Math.abs(normalizedLeftAngle - normalizedRightAngle)
+      : Number.POSITIVE_INFINITY;
+    const bilateralCalibrationGate = activeLeg === 'both'
+      ? (
+        bothLegsVisibleForCalibration &&
+        calibrationSideDiff <= maxCalibrationSideDiff &&
+        normalizedLeftAngle >= minCalibrationActiveAngle &&
+        normalizedRightAngle >= minCalibrationActiveAngle
+      )
+      : bilateralVisible;
+
+    const calibrationPostureOk = activeLeg === 'both' ? bilateralCalibrationGate : postureAccurate;
+    const calibrationGate = calibrationPostureOk || (performance.now() - lastPostureGoodAtRef.current <= 260);
+
+    if (calibrationGate) {
+      calibrationSamplesRef.current.push(currentAngle);
+      if (calibrationSamplesRef.current.length > 1200) {
+        calibrationSamplesRef.current.shift();
+      }
+    }
+
     const config = exercise?.calibration || {};
+    const movementPattern = config?.movementPattern || 'increase_then_decrease';
     const peakThreshold = typeof config.peakThreshold === 'number' ? config.peakThreshold : Math.max(20, (exercise?.targetAngle || 90) * 0.35);
     const resetThreshold = typeof config.resetThreshold === 'number' ? config.resetThreshold : Math.max(8, peakThreshold * 0.45);
+    const effectiveResetThreshold = resolveResetThreshold(peakThreshold, resetThreshold, config, movementPattern);
     const minPeakHoldTime = typeof config.minPeakHoldTime === 'number' ? config.minPeakHoldTime : 220;
     const minRepInterval = typeof config.minRepInterval === 'number' ? config.minRepInterval : 650;
 
     const tracker = calibrationTrackerRef.current;
     const now = Date.now();
 
-    if (!tracker.inPeak && currentAngle >= peakThreshold && postureAccurate) {
+    if (!tracker.inPeak && currentAngle >= peakThreshold && calibrationGate) {
       tracker.inPeak = true;
       tracker.peakAngle = currentAngle;
       tracker.peakStartedAt = now;
@@ -357,14 +567,14 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
 
     tracker.peakAngle = Math.max(tracker.peakAngle, currentAngle);
 
-    if (currentAngle > resetThreshold) {
+    if (currentAngle > effectiveResetThreshold) {
       return;
     }
 
     const heldLongEnough = now - tracker.peakStartedAt >= minPeakHoldTime;
     const intervalPassed = now - tracker.lastCaptureAt >= minRepInterval;
 
-    if (heldLongEnough && intervalPassed && postureAccurate) {
+    if (heldLongEnough && intervalPassed && calibrationGate) {
       tracker.lastCaptureAt = now;
 
       setCalibrationReps((prev) => {
@@ -372,8 +582,34 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
         const next = [...prev, Math.round(tracker.peakAngle)];
 
         if (next.length === 3) {
-          const avgBaseline = Math.round(next.reduce((sum, angle) => sum + angle, 0) / next.length);
-          setBaseline(avgBaseline);
+          const baselineCleaningConfig = {
+            minSamples: Number.isFinite(exercise?.decisionEngine?.baselineCleaning?.minSamples)
+              ? exercise.decisionEngine.baselineCleaning.minSamples
+              : 30,
+            lowerPercentile: Number.isFinite(exercise?.decisionEngine?.baselineCleaning?.lowerPercentile)
+              ? exercise.decisionEngine.baselineCleaning.lowerPercentile
+              : 10,
+            upperPercentile: Number.isFinite(exercise?.decisionEngine?.baselineCleaning?.upperPercentile)
+              ? exercise.decisionEngine.baselineCleaning.upperPercentile
+              : 90
+          };
+
+          const cleanedProfile = buildBaselineProfile(calibrationSamplesRef.current, {
+            minSamples: baselineCleaningConfig.minSamples,
+            lowerPercentile: baselineCleaningConfig.lowerPercentile,
+            upperPercentile: baselineCleaningConfig.upperPercentile
+          });
+
+          if (cleanedProfile) {
+            const cleanedBaseline = Math.round(cleanedProfile.maxAngle);
+            setBaseline(cleanedBaseline, cleanedProfile);
+            console.log(`✅ Cleaned baseline profile applied (${cleanedProfile.sampleCount}/${cleanedProfile.rawSampleCount} samples)`);
+          } else {
+            const avgBaseline = Math.round(next.reduce((sum, angle) => sum + angle, 0) / next.length);
+            setBaseline(avgBaseline);
+            console.log('ℹ️ Calibration sample size too low for outlier cleaning, using 3-rep average baseline');
+          }
+
           setIsCalibrating(false);
           setPhase(SESSION_PHASES.EXERCISE);
         }
@@ -385,27 +621,91 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
     tracker.inPeak = false;
     tracker.peakAngle = 0;
     tracker.peakStartedAt = 0;
-  }, [currentAngle, exercise, phase, postureAccurate, setBaseline, setPhase]);
+  }, [activeLeg, currentAngle, exercise, normalizedLeftAngle, normalizedRightAngle, phase, postureAccurate, setBaseline, setPhase]);
 
   useEffect(() => {
+    let cancelled = false;
+    let activeStream = null;
+
     const startCamera = async () => {
       try {
-        const videoConstraints = isMobile ? {
+        if (!navigator?.mediaDevices?.getUserMedia) {
+          throw new Error('Camera API is not available in this browser.');
+        }
+
+        setCameraError(null);
+        setCameraReady(false);
+
+        const baseConstraints = isMobile ? {
           width: { ideal: 854 },
           height: { ideal: 480 },
-          facingMode: 'user',
           frameRate: { ideal: 30, max: 30 }
         } : {
           width: { ideal: 1280 },
           height: { ideal: 720 },
-          facingMode: 'user',
           frameRate: { ideal: 60 }
         };
 
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: videoConstraints,
-          audio: false
-        });
+        let preferredDeviceId = null;
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const videoInputs = devices.filter((device) => device.kind === 'videoinput');
+
+          if (videoInputs.length === 0) {
+            throw Object.assign(new Error('No camera device found'), { name: 'NotFoundError' });
+          }
+
+          preferredDeviceId = videoInputs[0]?.deviceId || null;
+        } catch (deviceError) {
+          // Continue to getUserMedia attempts if enumeration fails due permissions.
+          if (deviceError?.name === 'NotFoundError') {
+            throw deviceError;
+          }
+        }
+
+        const attempts = [
+          {
+            video: {
+              ...baseConstraints,
+              facingMode: 'user'
+            },
+            audio: false
+          },
+          {
+            video: {
+              ...baseConstraints,
+              ...(preferredDeviceId ? { deviceId: { exact: preferredDeviceId } } : {})
+            },
+            audio: false
+          },
+          {
+            video: true,
+            audio: false
+          }
+        ];
+
+        let stream = null;
+        let lastError = null;
+
+        for (const constraints of attempts) {
+          try {
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
+            break;
+          } catch (attemptError) {
+            lastError = attemptError;
+          }
+        }
+
+        if (!stream) {
+          throw lastError || new Error('Unable to open camera stream.');
+        }
+
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
+        activeStream = stream;
 
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
@@ -413,16 +713,26 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
         }
       } catch (err) {
         console.error('Camera error:', err);
-        setCameraError(err.message);
+        if (!cancelled) {
+          setCameraReady(false);
+          setCameraError(toCameraErrorMessage(err));
+        }
       }
     };
 
     startCamera();
 
     return () => {
+      cancelled = true;
+
+      if (activeStream) {
+        activeStream.getTracks().forEach((track) => track.stop());
+      }
+
       if (videoRef.current?.srcObject) {
         const tracks = videoRef.current.srcObject.getTracks();
         tracks.forEach((track) => track.stop());
+        videoRef.current.srcObject = null;
       }
     };
   }, [isMobile]);
@@ -451,7 +761,11 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
       const poseData = await processFrame(video, timestamp);
 
       if (poseData && poseData.landmarks) {
-        const postureColor = postureAccurate ? 'green' : 'red';
+        const postureColor = postureState === 'neutral'
+          ? 'white'
+          : postureState === 'correct'
+            ? 'green'
+            : 'red';
 
         const leftLegColor = activeLeg === 'left' || activeLeg === 'both' ? postureColor : 'gray';
         const rightLegColor = activeLeg === 'right' || activeLeg === 'both' ? postureColor : 'gray';
@@ -476,7 +790,7 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [activeLeg, cameraReady, isInitialized, postureAccurate, processFrame]);
+  }, [activeLeg, cameraReady, isInitialized, postureState, processFrame]);
 
   useEffect(() => {
     const enterFullscreen = async () => {
@@ -504,8 +818,8 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
   }, []);
 
   const getFormQuality = () => {
-    if (!isFiniteAngle(currentAngle)) return 'neutral';
-    if (!postureAccurate) return 'poor';
+    if (postureState === 'neutral' || !isFiniteAngle(currentAngle)) return 'neutral';
+    if (postureState === 'incorrect') return 'poor';
     if (currentAngle >= exercise.targetAngle) return 'excellent';
     if (baselineROM && currentAngle >= baselineROM) return 'good';
     return 'poor';
@@ -515,16 +829,100 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
     if (document.fullscreenElement) {
       document.exitFullscreen().catch(() => {});
     }
+
     const sessionData = endSession();
+    const postureTotals = postureQualityRef.current;
+    const postureAccuracy = postureTotals.totalFrames > 0
+      ? Math.round((postureTotals.goodFrames / postureTotals.totalFrames) * 100)
+      : (postureState === 'incorrect' ? 0 : 100);
+    let cleanedSessionMetrics = null;
+    let stageScoreBreakdown = null;
+    let stageDecision = 'Unknown';
+
+    if (enableDecisionEngine) {
+      try {
+        const decisionConfig = exercise?.decisionEngine || {};
+        cleanedSessionMetrics = calculateSessionMetrics(
+          sessionAngleSamplesRef.current,
+          decisionConfig.sessionCleaning || {}
+        );
+
+        stageScoreBreakdown = calculateExplicitStageScore({
+          angle: cleanedSessionMetrics?.extension,
+          stability: cleanedSessionMetrics?.stability,
+          reps: sessionData?.totalReps || 0,
+          baselineProfile: baselineProfile || null,
+          config: decisionConfig
+        });
+
+        stageDecision = decideRecoveryStage(
+          stageScoreBreakdown.totalScore,
+          decisionConfig.decisionThresholds || {}
+        );
+
+        console.log(`📈 Stage decision: ${stageDecision} (${stageScoreBreakdown.totalScore}/100)`);
+      } catch (err) {
+        console.error('❌ Decision engine computation failed, falling back to default:', err);
+      }
+    }
+
     onEndSession?.({
       ...sessionData,
-      postureAccuracy: postureAccurate ? 100 : 0,
+      postureAccuracy,
       setsCompleted: Math.floor((sessionData?.totalReps || 0) / Math.max(1, exercise.targetReps || 1)),
-      currentSet: derivedSet
+      currentSet: derivedSet,
+      baselineProfile: baselineProfile || null,
+      sessionMetrics: cleanedSessionMetrics,
+      stageScore: stageScoreBreakdown?.totalScore || 0,
+      stageDecision,
+      stageDecisionBreakdown: stageScoreBreakdown
     });
   };
 
   const formQuality = getFormQuality();
+  const repConfig = exercise?.repDetection || {};
+  const calibrationConfig = exercise?.calibration || {};
+  const repMovementPattern = repConfig?.movementPattern || 'increase_then_decrease';
+  const calibrationMovementPattern = calibrationConfig?.movementPattern || 'increase_then_decrease';
+  const repPeakThreshold = Number.isFinite(repConfig.peakThreshold) ? repConfig.peakThreshold : null;
+  const repResetThreshold = Number.isFinite(repConfig.resetThreshold) ? repConfig.resetThreshold : null;
+  const effectiveRepResetThreshold = Number.isFinite(repPeakThreshold) && Number.isFinite(repResetThreshold)
+    ? resolveResetThreshold(repPeakThreshold, repResetThreshold, repConfig, repMovementPattern)
+    : repResetThreshold;
+  const calibrationPeakThreshold = Number.isFinite(calibrationConfig.peakThreshold) ? calibrationConfig.peakThreshold : null;
+  const calibrationResetThreshold = Number.isFinite(calibrationConfig.resetThreshold) ? calibrationConfig.resetThreshold : null;
+  const effectiveCalibrationResetThreshold = Number.isFinite(calibrationPeakThreshold) && Number.isFinite(calibrationResetThreshold)
+    ? resolveResetThreshold(calibrationPeakThreshold, calibrationResetThreshold, calibrationConfig, calibrationMovementPattern)
+    : calibrationResetThreshold;
+  const movementDeltaThreshold = Number.isFinite(exercise?.posture?.movementDeltaThreshold)
+    ? exercise.posture.movementDeltaThreshold
+    : 6;
+  const recentDebugAngles = recentAnglesRef.current.filter((value) => Number.isFinite(value));
+  const debugMovementRange = recentDebugAngles.length > 1
+    ? Math.max(...recentDebugAngles) - Math.min(...recentDebugAngles)
+    : 0;
+  const debugMovementActive = debugMovementRange >= movementDeltaThreshold;
+  const repRequiresBoth = !!exercise?.repDetection?.requireBothLegs;
+  const debugMaxRepSideDiff = Number.isFinite(exercise?.repDetection?.maxRepSideDiff)
+    ? exercise.repDetection.maxRepSideDiff
+    : 16;
+  const debugMinActiveAngle = Number.isFinite(exercise?.repDetection?.minActiveAngle)
+    ? exercise.repDetection.minActiveAngle
+    : 18;
+  const debugBothVisible = isFiniteAngle(normalizedLeftAngle) && isFiniteAngle(normalizedRightAngle);
+  const debugSideDiff = debugBothVisible ? Math.abs(normalizedLeftAngle - normalizedRightAngle) : Number.POSITIVE_INFINITY;
+  const debugBilateralPass = !repRequiresBoth || activeLeg !== 'both'
+    ? true
+    : (
+      debugBothVisible &&
+      debugSideDiff <= debugMaxRepSideDiff &&
+      normalizedLeftAngle >= debugMinActiveAngle &&
+      normalizedRightAngle >= debugMinActiveAngle
+    );
+  const postureTotals = postureQualityRef.current;
+  const livePostureAccuracy = postureTotals.totalFrames > 0
+    ? Math.round((postureTotals.goodFrames / postureTotals.totalFrames) * 100)
+    : 0;
 
   return (
     <div ref={containerRef} className="relative w-full h-full bg-black overflow-hidden">
@@ -586,7 +984,9 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
                   </div>
                   <div className="overflow-hidden">
                     <h2 className="text-white font-bold text-xs leading-tight truncate">{exercise.name}</h2>
-                    <div className="text-teal-400 text-[10px] font-semibold uppercase">{activeLeg} leg</div>
+                    <div className="text-teal-400 text-[10px] font-semibold uppercase">
+                      {activeLeg === 'both' ? 'both legs' : `${activeLeg} leg`}
+                    </div>
                   </div>
                 </div>
 
@@ -615,8 +1015,18 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-gray-400 text-[10px]">Posture</span>
-                    <span className={`text-xs font-bold ${postureAccurate ? 'text-green-400' : 'text-red-400'}`}>
-                      {postureAccurate ? 'Correct' : 'Adjust'}
+                    <span className={`text-xs font-bold ${
+                      postureState === 'incorrect'
+                        ? 'text-red-400'
+                        : postureState === 'correct'
+                          ? 'text-green-400'
+                          : 'text-white'
+                    }`}>
+                      {postureState === 'incorrect'
+                        ? 'Adjust'
+                        : postureState === 'correct'
+                          ? 'Correct'
+                          : 'Neutral'}
                     </span>
                   </div>
                 </div>
@@ -635,6 +1045,7 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
                   <div className="text-white/70 text-[10px] font-semibold mb-2 text-center tracking-widest uppercase">Form</div>
                   <div className="flex flex-col gap-2">
                     {[
+                      { key: 'neutral', color: '#FFFFFF', glow: 'rgba(255,255,255,0.8)', label: 'Neutral' },
                       { key: 'excellent', color: '#10B981', glow: 'rgba(16,185,129,0.8)', label: 'Excellent' },
                       { key: 'good', color: '#F59E0B', glow: 'rgba(245,158,11,0.8)', label: 'Good' },
                       { key: 'poor', color: '#EF4444', glow: 'rgba(239,68,68,0.8)', label: 'Needs work' },
@@ -807,6 +1218,36 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
             </button>
           </div>
         </motion.div>
+      )}
+
+      {cameraReady && isInitialized && (
+        <div className="absolute left-2 right-2 bottom-2 z-50 pointer-events-none">
+          <div className="bg-black/70 backdrop-blur-sm border border-white/20 rounded-md px-2 py-1 text-[10px] leading-tight font-mono text-white/95 overflow-hidden">
+            <div className="flex flex-wrap gap-x-3 gap-y-1">
+              <span>DBG</span>
+              <span>phase:{phase}</span>
+              <span>leg:{activeLeg}</span>
+              <span>mode:auto</span>
+              <span>L:{isFiniteAngle(normalizedLeftAngle) ? normalizedLeftAngle.toFixed(1) : '--'}</span>
+              <span>R:{isFiniteAngle(normalizedRightAngle) ? normalizedRightAngle.toFixed(1) : '--'}</span>
+              <span>C:{isFiniteAngle(currentAngle) ? currentAngle.toFixed(1) : '--'}</span>
+              <span>mv:{debugMovementRange.toFixed(1)}/{movementDeltaThreshold}</span>
+              <span>mvOn:{debugMovementActive ? 'Y' : 'N'}</span>
+              <span>bothVis:{debugBothVisible ? 'Y' : 'N'}</span>
+              <span>dLR:{Number.isFinite(debugSideDiff) ? debugSideDiff.toFixed(1) : '--'}/{debugMaxRepSideDiff}</span>
+              <span>bGate:{debugBilateralPass ? 'Y' : 'N'}</span>
+              <span>posture:{postureState}</span>
+              <span>acc:{livePostureAccuracy}%</span>
+              <span>rep:{reps}</span>
+              <span>rPk:{repPeakThreshold ?? '--'}</span>
+              <span>rRs:{effectiveRepResetThreshold ?? '--'}</span>
+              <span>cRep:{calibrationReps.length}/3</span>
+              <span>cPk:{calibrationPeakThreshold ?? '--'}</span>
+              <span>cRs:{effectiveCalibrationResetThreshold ?? '--'}</span>
+              <span>b:{baselineROM ?? '--'}</span>
+            </div>
+          </div>
+        </div>
       )}
 
       {!isFullscreen && null}

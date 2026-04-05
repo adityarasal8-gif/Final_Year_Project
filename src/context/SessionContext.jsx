@@ -9,6 +9,40 @@ import { calculateImprovement, getFeedbackState } from '../utils/geometry';
 
 const SessionContext = createContext(null);
 
+const BASELINE_RECORDS_STORAGE_KEY = 'physio_baseline_records_v2';
+const BASELINE_MAX_AGE_DAYS = 7;
+const DEFAULT_ANGLE_MODE = 'inner_knee_angle';
+
+const readBaselineRecords = () => {
+  try {
+    const raw = localStorage.getItem(BASELINE_RECORDS_STORAGE_KEY);
+    if (!raw) return {};
+
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (error) {
+    console.warn('⚠️ Failed to read scoped baseline records:', error);
+    return {};
+  }
+};
+
+const writeBaselineRecords = (records) => {
+  try {
+    localStorage.setItem(BASELINE_RECORDS_STORAGE_KEY, JSON.stringify(records));
+  } catch (error) {
+    console.error('Error saving scoped baseline records:', error);
+  }
+};
+
+const buildBaselineRecordKey = ({ exerciseId, legSide, angleMode }) => {
+  if (!exerciseId) return null;
+  return `${exerciseId}::${legSide || 'left'}::${angleMode || DEFAULT_ANGLE_MODE}`;
+};
+
+const getMinimumBaselineByAngleMode = (angleMode) => {
+  return angleMode === 'inner_knee_angle' ? 30 : 5;
+};
+
 /**
  * Session phases
  */
@@ -41,12 +75,20 @@ export const SessionProvider = ({ children }) => {
 
   // Baseline data (from calibration)
   const [baselineROM, setBaselineROM] = useState(null);
+  const [baselineProfile, setBaselineProfile] = useState(null);
   const [calibrationDate, setCalibrationDate] = useState(null);
+  const [exerciseContext, setExerciseContextState] = useState({
+    exerciseId: null,
+    angleMode: DEFAULT_ANGLE_MODE
+  });
 
   // Current session data
   const [currentAngle, setCurrentAngle] = useState(null);
   const [leftAngle, setLeftAngle] = useState(null);
   const [rightAngle, setRightAngle] = useState(null);
+
+  // Rollback control - Feature flag for explicit clinical decision math
+  const [enableDecisionEngine, setEnableDecisionEngine] = useState(true);
   const [maxAngleThisSession, setMaxAngleThisSession] = useState(null);
   const [reps, setReps] = useState(0);
   const [feedbackState, setFeedbackState] = useState(FEEDBACK_STATES.NEUTRAL);
@@ -68,6 +110,7 @@ export const SessionProvider = ({ children }) => {
   const maxAngleRef = useRef(null);
   const audioEnabledRef = useRef(audioEnabled);
   const baselineROMRef = useRef(baselineROM);
+  const exerciseContextRef = useRef(exerciseContext);
   const targetROMRef = useRef(targetROM);
   const isInFlexionRef = useRef(isInFlexion);
   const legSideRef = useRef(legSide);
@@ -87,6 +130,10 @@ export const SessionProvider = ({ children }) => {
   useEffect(() => {
     baselineROMRef.current = baselineROM;
   }, [baselineROM]);
+
+  useEffect(() => {
+    exerciseContextRef.current = exerciseContext;
+  }, [exerciseContext]);
 
   useEffect(() => {
     targetROMRef.current = targetROM;
@@ -112,25 +159,76 @@ export const SessionProvider = ({ children }) => {
     : 0;
 
   /**
+   * Set current exercise context so baselines can be scoped per exercise.
+   * @param {{exerciseId?: string|null, angleMode?: string|null}} context
+   */
+  const setExerciseContext = useCallback((context = {}) => {
+    const normalizedExerciseId = typeof context?.exerciseId === 'string' && context.exerciseId.trim()
+      ? context.exerciseId.trim()
+      : null;
+    const normalizedAngleMode = typeof context?.angleMode === 'string' && context.angleMode.trim()
+      ? context.angleMode.trim()
+      : DEFAULT_ANGLE_MODE;
+
+    setExerciseContextState({
+      exerciseId: normalizedExerciseId,
+      angleMode: normalizedAngleMode
+    });
+  }, []);
+
+  /**
    * Set baseline ROM from calibration test
    * @param {number} angle - Maximum flexion angle achieved
+   * @param {Object|null} profile - Optional cleaned baseline profile metrics
    */
-  const setBaseline = useCallback((angle) => {
-    if (!angle || angle <= 30) {
+  const setBaseline = useCallback((angle, profile = null) => {
+    const angleMode = exerciseContextRef.current?.angleMode || DEFAULT_ANGLE_MODE;
+    const minBaseline = getMinimumBaselineByAngleMode(angleMode);
+
+    if (!angle || angle <= minBaseline) {
       console.warn('⚠️ Invalid baseline angle:', angle);
       return;
     }
     
     const roundedAngle = Math.round(angle);
+    const normalizedProfile = profile && typeof profile === 'object' ? profile : null;
+
     setBaselineROM(roundedAngle);
-    setCalibrationDate(new Date().toISOString());
+    setBaselineProfile(normalizedProfile);
+    const calibrationTimestamp = new Date().toISOString();
+    setCalibrationDate(calibrationTimestamp);
     setPhase(SESSION_PHASES.EXERCISE);
     
-    // Save to localStorage for persistence with user identification
+    // Save scoped baseline per exercise+leg+angleMode.
     try {
-      localStorage.setItem('physio_baseline_rom', roundedAngle.toString());
-      localStorage.setItem('physio_calibration_date', new Date().toISOString());
-      localStorage.setItem('physio_baseline_leg_side', legSideRef.current);
+      const context = exerciseContextRef.current;
+      const recordKey = buildBaselineRecordKey({
+        exerciseId: context?.exerciseId,
+        legSide: legSideRef.current,
+        angleMode: context?.angleMode
+      });
+
+      if (recordKey) {
+        const records = readBaselineRecords();
+        records[recordKey] = {
+          exerciseId: context.exerciseId,
+          legSide: legSideRef.current,
+          angleMode: context.angleMode || DEFAULT_ANGLE_MODE,
+          baselineROM: roundedAngle,
+          baselineProfile: normalizedProfile,
+          targetROM: targetROMRef.current,
+          calibrationDate: calibrationTimestamp
+        };
+        writeBaselineRecords(records);
+      } else {
+        console.warn('⚠️ Baseline saved in-memory only because exercise context is missing');
+      }
+
+      // Cleanup legacy baseline keys so old unscoped values are not reused.
+      localStorage.removeItem('physio_baseline_rom');
+      localStorage.removeItem('physio_calibration_date');
+      localStorage.removeItem('physio_baseline_leg_side');
+      localStorage.removeItem('physio_baseline_profile');
       
       console.log(`✅ Baseline ROM set: ${roundedAngle}° (${legSideRef.current} leg)`);
       
@@ -178,16 +276,51 @@ export const SessionProvider = ({ children }) => {
     const now = Date.now();
 
     const movementPattern = repConfig?.movementPattern || 'increase_then_decrease';
-    const peakThreshold = typeof repConfig?.peakThreshold === 'number'
+    const isIncreaseThenDecrease = movementPattern === 'increase_then_decrease';
+    const baselineReference = baselineROMRef.current || 0;
+
+    let peakThreshold = typeof repConfig?.peakThreshold === 'number'
       ? repConfig.peakThreshold
-      : Math.max((baselineROMRef.current || 0) + 8, (targetROMRef.current || 0) - 15);
-    const resetThreshold = typeof repConfig?.resetThreshold === 'number'
+      : Math.max(baselineReference + 8, (targetROMRef.current || 0) - 15);
+
+    if (Number.isFinite(repConfig?.peakBaselineOffset)) {
+      peakThreshold = baselineReference + repConfig.peakBaselineOffset;
+    }
+
+    if (Number.isFinite(repConfig?.minPeakThreshold)) {
+      peakThreshold = Math.max(peakThreshold, repConfig.minPeakThreshold);
+    }
+
+    if (Number.isFinite(repConfig?.maxPeakThreshold)) {
+      peakThreshold = Math.min(peakThreshold, repConfig.maxPeakThreshold);
+    }
+
+    let resetThreshold = typeof repConfig?.resetThreshold === 'number'
       ? repConfig.resetThreshold
-      : Math.max(10, (baselineROMRef.current || 0) - 8);
+      : Math.max(10, baselineReference - 8);
+
+    if (Number.isFinite(repConfig?.resetBaselineDrop)) {
+      resetThreshold = isIncreaseThenDecrease
+        ? baselineReference - repConfig.resetBaselineDrop
+        : baselineReference + repConfig.resetBaselineDrop;
+    }
+
+    if (Number.isFinite(repConfig?.minResetThreshold)) {
+      resetThreshold = Math.max(resetThreshold, repConfig.minResetThreshold);
+    }
+
+    if (Number.isFinite(repConfig?.maxResetThreshold)) {
+      resetThreshold = Math.min(resetThreshold, repConfig.maxResetThreshold);
+    }
+
+    const adaptiveResetFactor = Number.isFinite(repConfig?.adaptiveResetFactor)
+      ? repConfig.adaptiveResetFactor
+      : null;
+    const adaptiveResetMin = Number.isFinite(repConfig?.adaptiveResetMin)
+      ? repConfig.adaptiveResetMin
+      : null;
     const minPeakHoldTime = typeof repConfig?.minPeakHoldTime === 'number' ? repConfig.minPeakHoldTime : 180;
     const minRepInterval = typeof repConfig?.minRepInterval === 'number' ? repConfig.minRepInterval : 600;
-
-    const isIncreaseThenDecrease = movementPattern === 'increase_then_decrease';
 
     const enteredPeak = isIncreaseThenDecrease
       ? angle >= peakThreshold
@@ -204,9 +337,29 @@ export const SessionProvider = ({ children }) => {
       return;
     }
 
+    const effectiveResetThreshold = (() => {
+      if (!Number.isFinite(adaptiveResetFactor)) {
+        return resetThreshold;
+      }
+
+      const adaptiveByPeak = peakThreshold * adaptiveResetFactor;
+
+      if (isIncreaseThenDecrease) {
+        const boostedReset = Math.max(resetThreshold, adaptiveByPeak);
+        return Number.isFinite(adaptiveResetMin)
+          ? Math.max(boostedReset, adaptiveResetMin)
+          : boostedReset;
+      }
+
+      const loweredReset = Math.min(resetThreshold, adaptiveByPeak);
+      return Number.isFinite(adaptiveResetMin)
+        ? Math.min(loweredReset, adaptiveResetMin)
+        : loweredReset;
+    })();
+
     const reachedReset = isIncreaseThenDecrease
-      ? angle <= resetThreshold
-      : angle >= resetThreshold;
+      ? angle <= effectiveResetThreshold
+      : angle >= effectiveResetThreshold;
 
     if (!reachedReset) {
       return;
@@ -234,6 +387,7 @@ export const SessionProvider = ({ children }) => {
         maxAngle: maxAngleRef.current || angle,
         timestamp: new Date().toISOString(),
         improvement: calculateImprovement(maxAngleRef.current || angle, baselineROMRef.current, targetROMRef.current),
+        improvementPercent: calculateImprovement(maxAngleRef.current || angle, baselineROMRef.current, targetROMRef.current),
         set: currentSetRef.current
       };
 
@@ -333,6 +487,8 @@ export const SessionProvider = ({ children }) => {
     const bestAngle = repHistory.length > 0 
       ? Math.max(...repHistory.map(r => r.maxAngle))
       : maxAngleThisSession || 0;
+    const improvementDeg = baselineROM ? Math.round(bestAngle - baselineROM) : 0;
+    const improvementPercent = calculateImprovement(bestAngle, baselineROM, targetROMRef.current);
     
     const sessionData = {
       reps: repHistory,
@@ -340,7 +496,10 @@ export const SessionProvider = ({ children }) => {
       bestAngle,
       duration,
       baselineROM,
-      improvement: bestAngle - baselineROM,
+      baselineProfile,
+      improvement: improvementDeg,
+      improvementDeg,
+      improvementPercent,
       sessionStartTime,
       sessionEndTime: endTime,
       currentSet,
@@ -349,7 +508,7 @@ export const SessionProvider = ({ children }) => {
     
     console.log('🏁 Session ended:', sessionData);
     return sessionData;
-  }, [reps, repHistory, baselineROM, maxAngleThisSession, sessionStartTime, currentSet, setsCompleted]);
+  }, [reps, repHistory, baselineROM, baselineProfile, maxAngleThisSession, sessionStartTime, currentSet, setsCompleted]);
 
   /**
    * Reset session (start new exercise session)
@@ -387,32 +546,62 @@ export const SessionProvider = ({ children }) => {
   }, [currentSet]);
 
   /**
-   * Load baseline from localStorage on mount
+   * Load scoped baseline when exercise context or leg side changes.
    */
   useEffect(() => {
-    const savedBaseline = localStorage.getItem('physio_baseline_rom');
-    const savedDate = localStorage.getItem('physio_calibration_date');
-    const savedLegSide = localStorage.getItem('physio_baseline_leg_side');
-
-    if (savedBaseline && savedDate) {
-      const baselineValue = parseFloat(savedBaseline);
-      const calibrationAge = Date.now() - new Date(savedDate).getTime();
-      const daysOld = calibrationAge / (1000 * 60 * 60 * 24);
-      
-      // Only use baseline if it's less than 7 days old and matches current leg side
-      if (daysOld < 7 && baselineValue > 30 && (!savedLegSide || savedLegSide === legSideRef.current)) {
-        setBaselineROM(baselineValue);
-        setCalibrationDate(savedDate);
-        setPhase(SESSION_PHASES.EXERCISE);
-        console.log(`📌 Loaded baseline ROM: ${baselineValue}° (${Math.round(daysOld)} days old)`);
-      } else {
-        console.log('⚠️ Baseline expired or leg side mismatch - requiring new calibration');
-        localStorage.removeItem('physio_baseline_rom');
-        localStorage.removeItem('physio_calibration_date');
-        localStorage.removeItem('physio_baseline_leg_side');
-      }
+    if (!exerciseContext?.exerciseId) {
+      return;
     }
-  }, []);
+
+    const recordKey = buildBaselineRecordKey({
+      exerciseId: exerciseContext.exerciseId,
+      legSide,
+      angleMode: exerciseContext.angleMode
+    });
+
+    if (!recordKey) {
+      return;
+    }
+
+    const records = readBaselineRecords();
+    const record = records[recordKey];
+
+    if (!record) {
+      setBaselineROM(null);
+      setBaselineProfile(null);
+      setCalibrationDate(null);
+      setPhase(SESSION_PHASES.SETUP);
+      return;
+    }
+
+    const baselineValue = parseFloat(record.baselineROM);
+    const minBaseline = getMinimumBaselineByAngleMode(exerciseContext.angleMode || DEFAULT_ANGLE_MODE);
+    const savedDate = record.calibrationDate;
+    const calibrationAge = savedDate ? Date.now() - new Date(savedDate).getTime() : Number.POSITIVE_INFINITY;
+    const daysOld = calibrationAge / (1000 * 60 * 60 * 24);
+
+    if (daysOld < BASELINE_MAX_AGE_DAYS && baselineValue > minBaseline) {
+      const parsedProfile = record.baselineProfile && typeof record.baselineProfile === 'object'
+        ? record.baselineProfile
+        : null;
+
+      setBaselineROM(baselineValue);
+      setBaselineProfile(parsedProfile);
+      setCalibrationDate(savedDate || null);
+      setPhase(SESSION_PHASES.EXERCISE);
+      console.log(`📌 Loaded scoped baseline ROM: ${baselineValue}° (${exerciseContext.exerciseId}/${legSide})`);
+      return;
+    }
+
+    delete records[recordKey];
+    writeBaselineRecords(records);
+
+    setBaselineROM(null);
+    setBaselineProfile(null);
+    setCalibrationDate(null);
+    setPhase(SESSION_PHASES.SETUP);
+    console.log('⚠️ Scoped baseline expired - requiring new calibration');
+  }, [exerciseContext, legSide]);
 
   /**
    * Context value
@@ -426,9 +615,15 @@ export const SessionProvider = ({ children }) => {
     targetROM,
     setTargetROM,
 
+    // Feature Flags
+    enableDecisionEngine,
+    setEnableDecisionEngine,
+
     // Baseline data
     baselineROM,
+    baselineProfile,
     calibrationDate,
+    setExerciseContext,
     setBaseline,
 
     leftAngle,

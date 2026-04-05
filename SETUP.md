@@ -20,13 +20,13 @@ This will install:
 npm run dev
 ```
 
-The app will start at `http://localhost:3000`
+The app will usually start at `http://localhost:5173`.
 
 ## Step 3: Test the Application
 
 ### First Time Setup:
 1. **Allow camera access** when prompted
-2. **Select leg side** (left or right)
+2. **Select leg side** (left, right, or both)
 3. **Start calibration** to set baseline ROM
 4. **Perform max knee flexion** and click "Set Baseline"
 
@@ -71,7 +71,7 @@ const {
 } = useSession();
 ```
 
-#### 4. **Viewport.jsx** - Camera Component
+#### 4. **ExerciseViewport.jsx** - Camera Component
 - Displays webcam feed
 - Overlays pose skeleton
 - Shows real-time stats
@@ -184,7 +184,7 @@ Once deployed:
 
 ### Slow Performance
 - ✅ Close other tabs/apps
-- ✅ Reduce camera resolution (edit Viewport.jsx)
+- ✅ Reduce camera resolution/frame rate (edit ExerciseViewport.jsx)
 - ✅ Check GPU acceleration enabled
 
 ### Angle Calculation Wrong

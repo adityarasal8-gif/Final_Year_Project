@@ -50,7 +50,7 @@ Traditional full-body pose detection fails or jitters when users sit close to ca
 
 ### 2. **Patient Interface**
 
-#### `components/PatientViewport.jsx`
+#### `components/ExerciseViewport.jsx`
 - Real-time webcam feed with canvas overlay
 - **LEG-ONLY skeleton rendering** (no upper body)
 - Color-coded feedback:
@@ -90,7 +90,7 @@ Traditional full-body pose detection fails or jitters when users sit close to ca
 
 ### 5. **Backend Integration**
 
-#### `firebase.js` & `utils/firestore.js`
+#### `src/firebase.js` & `src/utils/firestore.js`
 - Firebase Auth for user management  
 - Firestore collections:
   - `users/{uid}` - User profiles (role, baseline, therapistId)
@@ -124,7 +124,7 @@ cp .env.example .env
 # 3. Start development server
 npm run dev
 
-# 4. Open http://localhost:3000
+# 4. Open http://localhost:5173
 ```
 
 ### Firebase Setup
@@ -398,7 +398,8 @@ src/
 │   ├── tts.js                  # Text-to-Speech system
 │   └── firestore.js            # Firebase database operations
 ├── components/
-│   ├── PatientViewport.jsx     # Exercise interface (leg-only rendering)
+│   ├── ExerciseViewport.jsx    # Exercise interface (leg-only rendering)
+│   ├── PatientDashboard.jsx    # Patient dashboard (history + recovery)
 │   └── TherapistDashboard.jsx  # Analytics dashboard (Recharts)
 ├── context/
 │   └── SessionContext.jsx      # Global state management
@@ -423,7 +424,7 @@ src/
 
 This is a production-ready template. To extend:
 
-1. **Add New Exercise Types**: Duplicate PatientViewport, modify angle logic
+1. **Add New Exercise Types**: Extend ExerciseViewport and exercise configs, modify angle logic
 2. **Multi-Language TTS**: Add language selector, update tts.js
 3. **Pain Level Tracking**: Add slider in SessionContext
 4. **PDF Reports**: Use jsPDF to export session history

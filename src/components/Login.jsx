@@ -134,17 +134,17 @@ const Login = ({ userType, onSuccess, onBack, onSwitchToSignup }) => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-medical-primary via-teal-600 to-medical-secondary flex items-center justify-center px-3 sm:px-6 lg:px-20 xl:px-28 2xl:px-32 py-4 sm:py-6">
+    <div className="min-h-screen lg:h-screen bg-gradient-to-br from-medical-primary via-teal-600 to-medical-secondary flex items-center justify-center px-3 sm:px-6 lg:px-16 xl:px-20 2xl:px-24 py-4 sm:py-6 lg:py-3 overflow-y-auto lg:overflow-hidden">
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="w-full max-w-6xl"
+        className="w-full max-w-6xl lg:h-full lg:flex lg:flex-col"
       >
         {/* Back Button */}
         <motion.button
           whileHover={{ x: -4 }}
           onClick={onBack}
-          className="mb-6 flex items-center text-white/90 hover:text-white transition font-medium"
+          className="mb-4 lg:mb-3 flex items-center text-white/90 hover:text-white transition font-medium"
         >
           <span className="mr-2">←</span> Back to Home
         </motion.button>
@@ -154,28 +154,28 @@ const Login = ({ userType, onSuccess, onBack, onSwitchToSignup }) => {
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: 0.1 }}
-          className="bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/40 p-6 sm:p-8 lg:p-12 xl:px-14 max-h-[calc(100vh-8rem)] overflow-y-auto lg:grid lg:grid-cols-[1fr_1.2fr] lg:gap-12"
+          className="bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/40 p-6 sm:p-8 lg:px-10 lg:py-7 xl:px-12 lg:flex-1 lg:min-h-0 lg:overflow-hidden lg:grid lg:grid-cols-[0.95fr_1.2fr] lg:gap-8"
         >
-          <div className="hidden lg:flex flex-col rounded-2xl bg-gradient-to-br from-teal-600 to-cyan-700 text-white p-9 xl:p-10 shadow-xl">
-            <div className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center mb-6">
-              {userType === 'patient' ? <User className="w-7 h-7" /> : <Stethoscope className="w-7 h-7" />}
+          <div className="hidden lg:flex flex-col rounded-2xl bg-gradient-to-br from-teal-600 to-cyan-700 text-white p-7 xl:p-8 shadow-xl">
+            <div className="w-12 h-12 rounded-2xl bg-white/20 flex items-center justify-center mb-5">
+              {userType === 'patient' ? <User className="w-6 h-6" /> : <Stethoscope className="w-6 h-6" />}
             </div>
-            <h3 className="text-3xl xl:text-4xl font-bold tracking-tight leading-tight">Welcome Back</h3>
-            <p className="text-white/85 mt-4 text-sm xl:text-base leading-relaxed max-w-sm">
+            <h3 className="text-2xl xl:text-3xl font-bold tracking-tight leading-tight">Welcome Back</h3>
+            <p className="text-white/85 mt-3 text-sm xl:text-[15px] leading-relaxed max-w-sm">
               Continue your physiotherapy workflow with a cleaner laptop-first sign-in experience.
             </p>
-            <div className="mt-10 space-y-3.5 text-sm xl:text-[15px]">
-              <div className="rounded-xl bg-white/15 px-5 py-3.5 border border-white/20">Real-time session tracking</div>
-              <div className="rounded-xl bg-white/15 px-5 py-3.5 border border-white/20">Secure role-based access</div>
-              <div className="rounded-xl bg-white/15 px-5 py-3.5 border border-white/20">Therapist and patient ready</div>
+            <div className="mt-7 space-y-2.5 text-sm xl:text-[14px]">
+              <div className="rounded-xl bg-white/15 px-4 py-2.5 border border-white/20">Real-time session tracking</div>
+              <div className="rounded-xl bg-white/15 px-4 py-2.5 border border-white/20">Secure role-based access</div>
+              <div className="rounded-xl bg-white/15 px-4 py-2.5 border border-white/20">Therapist and patient ready</div>
             </div>
-            <div className="mt-auto pt-10 text-xs xl:text-sm tracking-wide text-white/75">
+            <div className="mt-auto pt-6 text-xs xl:text-sm tracking-wide text-white/75">
               Sign in as {userType === 'patient' ? 'Patient' : 'Therapist'}
             </div>
           </div>
 
-          <div className="relative flex flex-col min-h-[560px] lg:min-h-[600px]">
-            <div className="text-center lg:text-left mb-6 lg:mb-8">
+          <div className="relative flex flex-col lg:min-h-0">
+            <div className="text-center lg:text-left mb-5 lg:mb-4">
               <motion.div
                 initial={{ scale: 0 }}
                 animate={{ scale: 1 }}
@@ -188,11 +188,11 @@ const Login = ({ userType, onSuccess, onBack, onSwitchToSignup }) => {
                   <Stethoscope className="w-8 h-8 text-white" />
                 )}
               </motion.div>
-              <h2 className="text-3xl lg:text-4xl font-bold tracking-tight text-gray-900 mb-2 lg:mb-3">Sign In</h2>
+              <h2 className="text-3xl lg:text-3xl xl:text-4xl font-bold tracking-tight text-gray-900 mb-2">Sign In</h2>
               <p className="text-gray-600 lg:text-[15px] leading-relaxed">Access your {userType === 'patient' ? 'patient' : 'therapist'} workspace</p>
             </div>
 
-            <div className="mb-6 lg:mb-8 grid grid-cols-1 sm:grid-cols-3 gap-2 lg:gap-3">
+            <div className="mb-6 grid grid-cols-1 sm:grid-cols-3 gap-2 lg:hidden">
               <div className="text-xs lg:text-[13px] lg:tracking-wide font-semibold text-teal-700 bg-teal-50 border border-teal-100 rounded-lg py-2 lg:py-2.5 text-center">Fast Access</div>
               <div className="text-xs lg:text-[13px] lg:tracking-wide font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg py-2 lg:py-2.5 text-center">Secure Login</div>
               <div className="text-xs lg:text-[13px] lg:tracking-wide font-semibold text-cyan-700 bg-cyan-50 border border-cyan-100 rounded-lg py-2 lg:py-2.5 text-center">Role Based</div>
@@ -203,14 +203,14 @@ const Login = ({ userType, onSuccess, onBack, onSwitchToSignup }) => {
               <motion.div
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="mb-6 p-4 bg-medical-error/10 border border-medical-error/20 rounded-xl"
+                className="mb-4 p-3 bg-medical-error/10 border border-medical-error/20 rounded-xl"
               >
                 <p className="text-medical-error text-sm">{error}</p>
               </motion.div>
             )}
 
             {/* Login Form */}
-            <form id="login-form" onSubmit={handleSubmit} className="space-y-5 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-6">
+            <form id="login-form" onSubmit={handleSubmit} className="space-y-4 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-4">
               <div>
                 <label htmlFor="email" className="block text-sm lg:text-[13px] lg:uppercase lg:tracking-[0.06em] font-semibold text-gray-700 mb-2">
                   Email Address
@@ -223,7 +223,7 @@ const Login = ({ userType, onSuccess, onBack, onSwitchToSignup }) => {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     required
-                    className="w-full pl-12 pr-4 py-3.5 lg:py-4 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 lg:text-[15px] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-medical-primary focus:border-transparent transition"
+                    className="w-full pl-12 pr-4 py-3 lg:py-3.5 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 lg:text-[15px] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-medical-primary focus:border-transparent transition"
                     placeholder="your.email@example.com"
                   />
                 </div>
@@ -241,20 +241,20 @@ const Login = ({ userType, onSuccess, onBack, onSwitchToSignup }) => {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-                    className="w-full pl-12 pr-4 py-3.5 lg:py-4 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 lg:text-[15px] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-medical-primary focus:border-transparent transition"
+                    className="w-full pl-12 pr-4 py-3 lg:py-3.5 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 lg:text-[15px] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-medical-primary focus:border-transparent transition"
                     placeholder="••••••••"
                   />
                 </div>
               </div>
             </form>
 
-            <div className="mt-7 lg:mt-auto sticky bottom-0 -mx-2 px-2 pt-4 lg:pt-5 pb-2 lg:pb-3 bg-gradient-to-t from-white via-white to-white/90 backdrop-blur-sm border-t border-gray-100">
+            <div className="mt-5 lg:mt-auto pt-4 border-t border-gray-100">
               <motion.button
                 whileTap={{ scale: 0.98 }}
                 type="submit"
                 form="login-form"
                 disabled={loading}
-                className="w-full px-6 py-4 bg-gradient-to-r from-medical-primary to-teal-600 hover:from-teal-600 hover:to-medical-primary text-white font-semibold lg:tracking-[0.01em] rounded-xl shadow-lg transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                className="w-full px-6 py-3.5 bg-gradient-to-r from-medical-primary to-teal-600 hover:from-teal-600 hover:to-medical-primary text-white font-semibold lg:tracking-[0.01em] rounded-xl shadow-lg transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
                 {loading ? (
                   <>
@@ -269,37 +269,39 @@ const Login = ({ userType, onSuccess, onBack, onSwitchToSignup }) => {
                 )}
               </motion.button>
 
-              <motion.button
-                whileTap={{ scale: 0.98 }}
-                onClick={handleGoogleSignIn}
-                disabled={loading}
-                className="w-full mt-3 px-6 py-3.5 bg-white hover:bg-gray-50 text-gray-700 font-semibold lg:tracking-[0.01em] rounded-xl shadow-md border-2 border-gray-200 hover:border-gray-300 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3"
-              >
-                <svg className="w-5 h-5" viewBox="0 0 24 24">
-                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-                </svg>
-                {loading ? 'Signing in...' : 'Sign in with Google'}
-              </motion.button>
+              <div className="mt-2.5 grid grid-cols-1 lg:grid-cols-2 gap-2.5">
+                <motion.button
+                  whileTap={{ scale: 0.98 }}
+                  onClick={handleGoogleSignIn}
+                  disabled={loading}
+                  className="w-full px-5 py-3 bg-white hover:bg-gray-50 text-gray-700 font-semibold lg:tracking-[0.01em] rounded-xl shadow-md border-2 border-gray-200 hover:border-gray-300 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  <svg className="w-5 h-5" viewBox="0 0 24 24">
+                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                  </svg>
+                  {loading ? 'Signing in...' : 'Google'}
+                </motion.button>
 
-              <motion.button
-                whileTap={{ scale: 0.98 }}
-                onClick={handleDemoMode}
-                disabled={loading}
-                className="w-full mt-3 px-6 py-3.5 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-white font-semibold lg:tracking-[0.01em] rounded-xl shadow-lg border-2 border-amber-400/30 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-              >
-                <Sparkles className="w-5 h-5" />
-                Try Demo Mode
-              </motion.button>
+                <motion.button
+                  whileTap={{ scale: 0.98 }}
+                  onClick={handleDemoMode}
+                  disabled={loading}
+                  className="w-full px-5 py-3 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-white font-semibold lg:tracking-[0.01em] rounded-xl shadow-lg border-2 border-amber-400/30 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  <Sparkles className="w-5 h-5" />
+                  Demo
+                </motion.button>
+              </div>
 
-              <p className="text-xs lg:text-sm text-gray-500 text-center mt-3">
+              <p className="text-xs text-gray-500 text-center mt-2.5 lg:mt-2">
                 No account needed • Explore instantly
               </p>
 
-              <div className="mt-5 pt-5 border-t border-gray-100 text-center">
-                <p className="text-gray-600 lg:text-[15px]">
+              <div className="mt-3 pt-3 border-t border-gray-100 text-center">
+                <p className="text-gray-600 text-sm lg:text-[14px]">
                   Don't have an account?{' '}
                   <button
                     onClick={onSwitchToSignup}
@@ -318,7 +320,7 @@ const Login = ({ userType, onSuccess, onBack, onSwitchToSignup }) => {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.3 }}
-          className="mt-7 text-center text-sm lg:text-[15px] leading-relaxed text-white/80 space-y-1"
+          className="mt-5 text-center text-sm leading-relaxed text-white/80 space-y-1 lg:hidden"
         >
           <p>🔒 Bank-level encryption • HIPAA compliant</p>
           <p>All video processing happens on your device</p>

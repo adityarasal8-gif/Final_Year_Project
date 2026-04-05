@@ -18,13 +18,14 @@ src/
 │   ├── LandingPageNew.jsx      ✨ NEW - Marketing landing page
 │   ├── PatientDashboard.jsx    ✨ NEW - Patient daily dashboard
 │   ├── ExerciseViewport.jsx    ✨ NEW - Minimalist exercise mode
-│   ├── LandingPage.jsx          (Original - still works)
-│   ├── PatientViewport.jsx      (Original - still works)
+│   ├── LandingPage.jsx.old      📦 Archived backup
+│   ├── PatientViewport.jsx.old  📦 Archived backup
+│   ├── Viewport.jsx.old         📦 Archived backup
 │   ├── Login.jsx                (Existing)
 │   ├── Signup.jsx               (Existing)
 │   └── TherapistDashboard.jsx   (Existing)
 ├── tailwind.config.js           ✅ UPDATED - Medical colors
-└── DESIGN_SYSTEM.md             📚 Full documentation
+└── PRODUCT_UI_AND_PHASES_CONSOLIDATED.md  📚 Consolidated design and phase docs
 ```
 
 ---
@@ -75,7 +76,7 @@ function App() {
 
 ### Option 2: Gradual Migration
 
-Keep both old and new, let users choose:
+Use the new flow by default and optionally restore archived `.old` components if you need temporary rollback:
 
 ```jsx
 // App.jsx
@@ -93,9 +94,7 @@ if (currentView === 'dashboard' && useNewUI) {
 }
 
 if (currentView === 'exercise') {
-  return useNewUI
-    ? <ExerciseViewport ... />
-    : <PatientViewport ... />;
+  return <ExerciseViewport ... />;
 }
 ```
 
@@ -414,7 +413,7 @@ colors: {
 
 ## 📚 Documentation
 
-- **Full Design System:** See `DESIGN_SYSTEM.md`
+- **Design + Phase Reference:** See `PRODUCT_UI_AND_PHASES_CONSOLIDATED.md`
 - **Component Props:** See inline TypeScript interfaces above
 - **Animation Examples:** Check Framer Motion sections in components
 - **Tailwind Tokens:** Defined in `tailwind.config.js`
@@ -451,4 +450,4 @@ colors: {
 
 **Ready to go! 🚀 Your medical-grade UI is all set up.**
 
-See `DESIGN_SYSTEM.md` for detailed component documentation.
+See `PRODUCT_UI_AND_PHASES_CONSOLIDATED.md` for detailed component and phase documentation.

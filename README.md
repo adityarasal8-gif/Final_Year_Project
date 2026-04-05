@@ -35,14 +35,21 @@ A progressive web application for knee physiotherapy monitoring using AI pose de
 
 ```
 src/
+├── components/
+│   ├── ExerciseViewport.jsx    # Immersive camera + overlay exercise mode
+│   ├── PatientDashboard.jsx    # Patient home + history + recovery charts
+│   ├── TherapistDashboard.jsx  # Therapist analytics and patient tracking
+│   ├── Login.jsx               # Auth screens
+│   └── Signup.jsx
+├── context/
+│   └── SessionContext.jsx      # Global session state (baseline, reps, improvement)
 ├── hooks/
 │   └── usePoseEstimation.js    # MediaPipe integration & frame processing
 ├── utils/
-│   └── geometry.js             # Math functions for angle calculation
-├── components/
-│   └── Viewport.jsx            # Webcam + Canvas overlay component
-├── context/
-│   └── SessionContext.jsx      # Global session state management
+│   ├── geometry.js             # Math functions for angle calculation
+│   ├── drawing.js              # Canvas overlay drawing helpers
+│   └── firestore.js            # Firestore data access helpers
+├── firebase.js                 # Firebase initialization
 ├── App.jsx                     # Main app orchestration
 ├── main.jsx                    # React entry point
 └── index.css                   # Tailwind styles
@@ -73,7 +80,7 @@ npm run preview
 
 ### Usage
 
-1. **Setup**: Select which leg needs therapy (left/right)
+1. **Setup**: Select which leg needs therapy (left/right/both)
 2. **Calibration**: Perform max knee flexion - this becomes your baseline
 3. **Exercise**: Start your session and track real-time progress
 4. **Feedback**: 
@@ -149,7 +156,8 @@ Once deployed, users can install the app:
 ### Pose detection slow
 - Ensure good lighting
 - Stand 6-8 feet from camera
-- Reduce camera resolution in [Viewport.jsx](src/components/Viewport.jsx)
+- Reduce camera resolution or frame rate in [src/components/ExerciseViewport.jsx](src/components/ExerciseViewport.jsx)
+- Tune pose confidence/smoothing in [src/hooks/usePoseEstimation.js](src/hooks/usePoseEstimation.js)
 
 ### Angle calculation issues
 - Ensure full body visible in frame
