@@ -116,6 +116,14 @@ class TTSManager {
   isAvailable() {
     return 'speechSynthesis' in window;
   }
+
+  getLastMessage() {
+    return this.lastMessage;
+  }
+
+  isEnabled() {
+    return this.enabled;
+  }
 }
 
 // Create singleton instance
@@ -243,6 +251,14 @@ export const isTTSAvailable = () => {
   return ttsManager.isAvailable();
 };
 
+export const getLatestSpeechMessage = () => {
+  return ttsManager.getLastMessage();
+};
+
+export const isSpeechEnabled = () => {
+  return ttsManager.isEnabled();
+};
+
 export default {
   FEEDBACK_MESSAGES,
   speakFeedback,
@@ -252,5 +268,7 @@ export default {
   speakGuidance,
   cancelSpeech,
   setTTSEnabled,
-  isTTSAvailable
+  isTTSAvailable,
+  getLatestSpeechMessage,
+  isSpeechEnabled
 };
