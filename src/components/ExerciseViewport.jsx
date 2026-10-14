@@ -15,6 +15,15 @@ import {
   calculateExplicitStageScore,
   decideRecoveryStage
 } from '../utils/geometry';
+import {
+  buildExerciseInstruction,
+  speakExerciseInstruction,
+  repeatLastInstruction,
+  muteVoice,
+  unmuteVoice
+} from '../utils/voiceFeedback';
+import { createVoiceCommandController, isVoiceCommandSupported } from '../utils/voiceCommands';
+import { cancelSpeech } from '../utils/tts';
 
 const normalizeAngleForExercise = (rawAngle, angleMode) => {
   if (typeof rawAngle !== 'number') return null;
@@ -145,6 +154,11 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
   const [isCalibrating, setIsCalibrating] = useState(true);
   const [calibrationScale, setCalibrationScale] = useState(1);
   const [postureState, setPostureState] = useState('neutral');
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [voiceCommandsEnabled, setVoiceCommandsEnabled] = useState(false);
+  const [voiceCommandStatus, setVoiceCommandStatus] = useState('Voice commands off');
+  const [voiceListening, setVoiceListening] = useState(false);
+  const [latestInstruction, setLatestInstruction] = useState('Voice guidance ready');
 
   const [overlayPositions, setOverlayPositions] = useState({
     reps: { x: 16, y: 16 },
@@ -158,6 +172,8 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
   const legSideRef = useRef('left');
   const leftAngleRef = useRef(null);
   const rightAngleRef = useRef(null);
+  const voiceCommandControllerRef = useRef(null);
+  const voiceCommandHandlerRef = useRef(null);
 
   const {
     phase,
@@ -272,6 +288,121 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
   });
 
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  const derivedSet = Math.min(
+    exercise.targetSets || 1,
+    Math.floor((reps || 0) / Math.max(1, exercise.targetReps || 1)) + 1
+  );
+
+  const repeatCurrentInstruction = useCallback(() => {
+    const repeated = repeatLastInstruction();
+    if (repeated) {
+      setLatestInstruction(repeated);
+      setVoiceCommandStatus('Repeated latest instruction');
+      return;
+    }
+
+    setLatestInstruction('No instruction available yet.');
+    setVoiceCommandStatus('No instruction available yet.');
+  }, []);
+
+  const handleExitSession = useCallback(() => {
+    cancelSpeech();
+    voiceCommandControllerRef.current?.stop();
+
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    }
+
+    const sessionData = endSession();
+    const postureTotals = postureQualityRef.current;
+    const postureAccuracy = postureTotals.totalFrames > 0
+      ? Math.round((postureTotals.goodFrames / postureTotals.totalFrames) * 100)
+      : (postureState === 'incorrect' ? 0 : 100);
+    let cleanedSessionMetrics = null;
+    let stageScoreBreakdown = null;
+    let stageDecision = 'Unknown';
+
+    if (enableDecisionEngine) {
+      try {
+        const decisionConfig = exercise?.decisionEngine || {};
+        cleanedSessionMetrics = calculateSessionMetrics(
+          sessionAngleSamplesRef.current,
+          decisionConfig.sessionCleaning || {}
+        );
+
+        stageScoreBreakdown = calculateExplicitStageScore({
+          angle: cleanedSessionMetrics?.extension,
+          stability: cleanedSessionMetrics?.stability,
+          reps: sessionData?.totalReps || 0,
+          baselineProfile: baselineProfile || null,
+          config: decisionConfig
+        });
+
+        stageDecision = decideRecoveryStage(
+          stageScoreBreakdown.totalScore,
+          decisionConfig.decisionThresholds || {}
+        );
+
+        console.log(`📈 Stage decision: ${stageDecision} (${stageScoreBreakdown.totalScore}/100)`);
+      } catch (err) {
+        console.error('❌ Decision engine computation failed, falling back to default:', err);
+      }
+    }
+
+    onEndSession?.({
+      ...sessionData,
+      postureAccuracy,
+      setsCompleted: Math.floor((sessionData?.totalReps || 0) / Math.max(1, exercise.targetReps || 1)),
+      currentSet: derivedSet,
+      baselineProfile: baselineProfile || null,
+      sessionMetrics: cleanedSessionMetrics,
+      stageScore: stageScoreBreakdown?.totalScore || 0,
+      stageDecision,
+      stageDecisionBreakdown: stageScoreBreakdown
+    });
+  }, [baselineProfile, derivedSet, enableDecisionEngine, endSession, exercise, onEndSession, postureState]);
+
+  const handleVoiceCommand = useCallback((command) => {
+    if (!command) return;
+
+    if (command === 'start') {
+      setVoiceCommandStatus(phase === SESSION_PHASES.EXERCISE
+        ? 'Session is already active.'
+        : 'Complete calibration using the on-screen flow before starting.');
+      return;
+    }
+
+    if (command === 'stop') {
+      setVoiceCommandStatus('Stopping session');
+      handleExitSession();
+      return;
+    }
+
+    if (command === 'repeat') {
+      repeatCurrentInstruction();
+      return;
+    }
+
+    if (command === 'mute') {
+      setVoiceEnabled(false);
+      muteVoice();
+      setVoiceCommandStatus('Voice muted');
+      return;
+    }
+
+    if (command === 'unmute') {
+      setVoiceEnabled(true);
+      unmuteVoice();
+      setVoiceCommandStatus('Voice unmuted');
+      return;
+    }
+
+    if (command === 'next') {
+      setVoiceCommandStatus('Next exercise navigation is not available in this screen.');
+    }
+  }, [handleExitSession, phase, repeatCurrentInstruction]);
+
+  voiceCommandHandlerRef.current = handleVoiceCommand;
 
   const normalizedLeftAngle = normalizeAngleForExercise(detectedLeftAngle, exercise?.angleMode);
   const normalizedRightAngle = normalizeAngleForExercise(detectedRightAngle, exercise?.angleMode);
@@ -309,11 +440,6 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
     const postureRatio = correctVotes / postureVotes.length;
     setPostureState(postureRatio >= 0.65 ? 'correct' : 'incorrect');
   }, [currentAngle, exercise, phase, postureAccurate]);
-  const derivedSet = Math.min(
-    exercise.targetSets || 1,
-    Math.floor((reps || 0) / Math.max(1, exercise.targetReps || 1)) + 1
-  );
-
   useEffect(() => {
     baselineROMRef.current = baselineROM;
   }, [baselineROM]);
@@ -474,6 +600,80 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
       setIsCalibrating(false);
     }
   }, [phase]);
+
+  useEffect(() => {
+    if (!voiceEnabled || phase !== SESSION_PHASES.EXERCISE) {
+      return;
+    }
+
+    const instruction = buildExerciseInstruction({
+      exerciseName: exercise?.name,
+      postureState,
+      currentAngle,
+      baselineROM
+    });
+
+    if (!instruction) {
+      return;
+    }
+
+    const spokenInstruction = speakExerciseInstruction({
+      exerciseName: exercise?.name,
+      postureState,
+      currentAngle,
+      baselineROM,
+      forced: false
+    });
+
+    if (spokenInstruction) {
+      setLatestInstruction(spokenInstruction);
+      setVoiceCommandStatus('Voice guidance active');
+    }
+  }, [baselineROM, currentAngle, exercise?.name, phase, postureState, voiceEnabled]);
+
+  const toggleVoiceCommands = () => {
+    if (voiceCommandControllerRef.current) {
+      voiceCommandControllerRef.current.destroy();
+      voiceCommandControllerRef.current = null;
+      setVoiceCommandsEnabled(false);
+      setVoiceListening(false);
+      setVoiceCommandStatus('Voice commands off');
+      return;
+    }
+
+    if (!isVoiceCommandSupported()) {
+      setVoiceCommandStatus('Voice commands are not supported in this browser. Try Chrome or Edge on localhost or HTTPS.');
+      return;
+    }
+
+    const controller = createVoiceCommandController({
+      onCommand: (command) => voiceCommandHandlerRef.current?.(command),
+      onStatusChange: (status) => {
+        setVoiceCommandStatus(status);
+        setVoiceListening(status.toLowerCase().includes('listening'));
+      },
+      onError: (errorName) => {
+        setVoiceListening(false);
+        if (errorName === 'not-allowed' || errorName === 'service-not-allowed') {
+          voiceCommandControllerRef.current?.destroy();
+          voiceCommandControllerRef.current = null;
+          setVoiceCommandsEnabled(false);
+        }
+      }
+    });
+
+    voiceCommandControllerRef.current = controller;
+    setVoiceCommandsEnabled(true);
+    controller.start();
+  };
+
+  useEffect(() => {
+    return () => {
+      cancelSpeech();
+      voiceCommandControllerRef.current?.destroy();
+      voiceCommandControllerRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     if (phase === SESSION_PHASES.CALIBRATION) {
@@ -825,60 +1025,6 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
     return 'poor';
   };
 
-  const handleExitSession = () => {
-    if (document.fullscreenElement) {
-      document.exitFullscreen().catch(() => {});
-    }
-
-    const sessionData = endSession();
-    const postureTotals = postureQualityRef.current;
-    const postureAccuracy = postureTotals.totalFrames > 0
-      ? Math.round((postureTotals.goodFrames / postureTotals.totalFrames) * 100)
-      : (postureState === 'incorrect' ? 0 : 100);
-    let cleanedSessionMetrics = null;
-    let stageScoreBreakdown = null;
-    let stageDecision = 'Unknown';
-
-    if (enableDecisionEngine) {
-      try {
-        const decisionConfig = exercise?.decisionEngine || {};
-        cleanedSessionMetrics = calculateSessionMetrics(
-          sessionAngleSamplesRef.current,
-          decisionConfig.sessionCleaning || {}
-        );
-
-        stageScoreBreakdown = calculateExplicitStageScore({
-          angle: cleanedSessionMetrics?.extension,
-          stability: cleanedSessionMetrics?.stability,
-          reps: sessionData?.totalReps || 0,
-          baselineProfile: baselineProfile || null,
-          config: decisionConfig
-        });
-
-        stageDecision = decideRecoveryStage(
-          stageScoreBreakdown.totalScore,
-          decisionConfig.decisionThresholds || {}
-        );
-
-        console.log(`📈 Stage decision: ${stageDecision} (${stageScoreBreakdown.totalScore}/100)`);
-      } catch (err) {
-        console.error('❌ Decision engine computation failed, falling back to default:', err);
-      }
-    }
-
-    onEndSession?.({
-      ...sessionData,
-      postureAccuracy,
-      setsCompleted: Math.floor((sessionData?.totalReps || 0) / Math.max(1, exercise.targetReps || 1)),
-      currentSet: derivedSet,
-      baselineProfile: baselineProfile || null,
-      sessionMetrics: cleanedSessionMetrics,
-      stageScore: stageScoreBreakdown?.totalScore || 0,
-      stageDecision,
-      stageDecisionBreakdown: stageScoreBreakdown
-    });
-  };
-
   const formQuality = getFormQuality();
   const repConfig = exercise?.repDetection || {};
   const calibrationConfig = exercise?.calibration || {};
@@ -1032,6 +1178,62 @@ const ExerciseViewport = ({ exercise, selectedLeg, onEndSession }) => {
                 </div>
               </div>
             </motion.div>
+
+            {phase === SESSION_PHASES.EXERCISE && (
+              <motion.div
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                className="absolute z-30"
+                style={{ right: '18px', top: '96px' }}
+              >
+                <div className="bg-black/80 backdrop-blur-md rounded-2xl p-3 border border-white/10 shadow-2xl w-[230px]">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-teal-300">Voice Guidance</span>
+                    <span className={`text-[9px] font-bold px-2 py-1 rounded-full ${voiceEnabled ? 'bg-emerald-500/20 text-emerald-300' : 'bg-red-500/20 text-red-300'}`}>
+                      {voiceEnabled ? (voiceListening ? 'Listening' : 'Ready') : 'Muted'}
+                    </span>
+                  </div>
+
+                  <p className="text-white text-[11px] leading-relaxed min-h-[40px]">{latestInstruction}</p>
+
+                  <div className="mt-3 text-[10px] text-gray-300">{voiceCommandStatus}</div>
+
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (voiceEnabled) {
+                          muteVoice();
+                          setVoiceEnabled(false);
+                          setVoiceCommandStatus('Voice muted');
+                        } else {
+                          unmuteVoice();
+                          setVoiceEnabled(true);
+                          setVoiceCommandStatus('Voice enabled');
+                        }
+                      }}
+                      className="px-2 py-1 rounded-md bg-white/10 text-white text-[10px] font-medium hover:bg-white/20 transition"
+                    >
+                      {voiceEnabled ? 'Mute' : 'Unmute'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={repeatCurrentInstruction}
+                      className="px-2 py-1 rounded-md bg-cyan-500/20 text-cyan-200 text-[10px] font-medium hover:bg-cyan-500/30 transition"
+                    >
+                      Repeat
+                    </button>
+                    <button
+                      type="button"
+                      onClick={toggleVoiceCommands}
+                      className="px-2 py-1 rounded-md bg-purple-500/20 text-purple-200 text-[10px] font-medium hover:bg-purple-500/30 transition"
+                    >
+                      {voiceCommandsEnabled ? 'Disable' : 'Enable'} Voice Commands
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            )}
 
             {phase === SESSION_PHASES.EXERCISE && (
               <motion.div
